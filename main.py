@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-Example usage of PyBFS for baseflow separation and forecasting
+Example usage of BFS for baseflow separation and forecasting
 
 This script demonstrates:
 1. Loading streamflow data and site parameters
 2. Generating a baseflow table
-3. Running PyBFS for baseflow separation
+3. Running BFS for baseflow separation
 4. Visualizing results
 5. Creating forecasts
 """
 
 import pandas as pd
 import numpy as np
-import pybfs as bfs
-
+import pybfs
 
 def main():
     """Main execution function"""
@@ -29,7 +28,7 @@ def main():
     # Get parameters for specific site
     site_number = 2312200
     print(f"Extracting parameters for site {site_number}...")
-    basin_char, gw_hyd, flow = bfs.get_values_for_site(bfs_params_usgs, site_number)
+    basin_char, gw_hyd, flow = pybfs.get_values_for_site(bfs_params_usgs, site_number)
 
     # Extract basin characteristics
     area, lb, x1, wb, por = basin_char[0], basin_char[1], basin_char[2], basin_char[3], basin_char[4]
@@ -47,13 +46,13 @@ def main():
 
     # Generate baseflow table
     print("\nGenerating baseflow table...")
-    SBT = bfs.base_table(lb, x1, wb, beta, kb, streamflow_data, por)
+    SBT = pybfs.base_table(lb, x1, wb, beta, kb, streamflow_data, por)
     print(f"Baseflow table generated with {len(SBT)} rows")
 
-    # Run PyBFS
-    print("\nRunning PyBFS baseflow separation...")
-    result = bfs.PyBFS(streamflow_data, SBT, basin_char, gw_hyd, flow)
-    print(f"PyBFS completed for {len(result)} time steps")
+    # Run BFS
+    print("\nRunning BFS baseflow separation...")
+    result = pybfs.bfs(streamflow_data, SBT, basin_char, gw_hyd, flow)
+    print(f"BFS completed for {len(result)} time steps")
 
     # Display summary statistics
     print("\n=== Results Summary ===")
@@ -65,7 +64,7 @@ def main():
 
     # Plot results
     print("\nPlotting baseflow simulation...")
-    bfs.plot_baseflow_simulation(streamflow_data, result)
+    pybfs.plot_baseflow_simulation(streamflow_data, result)
 
     # === FORECASTING EXAMPLE ===
     print("\n=== Running Forecast Example ===")
@@ -78,8 +77,8 @@ def main():
         (streamflow_data['Date'] >= start_date) & (streamflow_data['Date'] <= end_date)
     ]
 
-    print(f"Running PyBFS for calibration period ({start_date} to {end_date})...")
-    tmp2 = bfs.PyBFS(streamflow_data_filtered, SBT, basin_char, gw_hyd, flow)
+    print(f"Running BFS for calibration period ({start_date} to {end_date})...")
+    tmp2 = pybfs.bfs(streamflow_data_filtered, SBT, basin_char, gw_hyd, flow)
 
     # Extract initial conditions from last time step
     Xi, Zbi, Zsi, StBi, StSi, Surflow, Baseflow, Rech = tmp2.iloc[-1][
@@ -97,12 +96,12 @@ def main():
     })
 
     print(f"\nForecasting for period 2018-10-01 to 2018-11-30...")
-    f = bfs.forecast(forecast_df, SBT, basin_char, gw_hyd, flow, ini)
+    f = pybfs.forecast(forecast_df, SBT, basin_char, gw_hyd, flow, ini)
     print(f"Forecast completed for {len(f)} time steps")
 
     # Plot forecast
     print("\nPlotting baseflow forecast...")
-    bfs.plot_forecast_baseflow(f)
+    pybfs.plot_forecast_baseflow(f)
 
     # Plot forecast with observed data for comparison
     forecast_start = '2018-10-01'
@@ -112,7 +111,7 @@ def main():
     ]
 
     print("\nPlotting forecast with observed streamflow...")
-    bfs.plot_forecast_baseflow_streamflow(f, streamflow_data_forecast)
+    pybfs.plot_forecast_baseflow_streamflow(f, streamflow_data_forecast)
 
     print("\n=== Analysis Complete ===")
 
