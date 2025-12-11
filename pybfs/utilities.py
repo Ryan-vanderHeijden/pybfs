@@ -317,9 +317,9 @@ def base_table(lb, x1, wb, b, kb, q, por):
     # Define the log range of flow values
     tmp_range = np.log10([np.min(tmp_q) / 10, np.max(tmp_q)])
 
-    # Create log-spaced discharge values
+    # Create log-spaced discharge values (matching R: 1000 values, then prepend 0)
     qq = np.logspace(tmp_range[0], tmp_range[1], num=1000)
-    qq[0] = 0
+    qq = np.concatenate([[0], qq])  # Prepend 0 to match R's c(0,qq)
 
     # Calculate z based on the value of b
     if b != 0.5:
@@ -331,12 +331,27 @@ def base_table(lb, x1, wb, b, kb, q, por):
     x = x1 * z ** (1 / b)
     s = wb * por * ((1 / x1 ** b) * (1 / (b + 1)) * x ** (b + 1) + (lb - x) * z)
 
-    # Construct the table and round values
+    # Construct the table and round values to 5 significant digits (matching R's signif(x,5))
+    def signif(x, digits=5):
+        """Round to specified number of significant digits (matching R's signif function)"""
+        # Handle zero and NaN
+        mask = (x == 0) | np.isnan(x)
+        result = np.zeros_like(x)
+        # For non-zero values, round to significant digits
+        non_zero = ~mask
+        if np.any(non_zero):
+            # Calculate order of magnitude
+            order = np.floor(np.log10(np.abs(x[non_zero])))
+            # Round to significant digits
+            result[non_zero] = np.round(x[non_zero] / (10 ** order), digits - 1) * (10 ** order)
+        result[mask] = x[mask]  # Keep zeros and NaN as-is
+        return result
+    
     BT = pd.DataFrame({
-        'Xb': np.round(x, 5),
-        'Z':  np.round(z, 5),
-        'S':  np.round(s, 5),
-        'Q':  np.round(qq, 5)
+        'Xb': signif(x, 5),
+        'Z':  signif(z, 5),
+        'S':  signif(s, 5),
+        'Q':  signif(qq, 5)
     })
 
     # Filter out rows where x < lb
@@ -893,40 +908,74 @@ def flow_metrics(qin, timestep='day', fr4rise=0.05):
     rec = np.zeros(xx, dtype=bool)  # Reset recession vector
 
     # Rebuild indices for 10-day window (0-based for Python)
-    rp_indices = np.arange(xx).reshape(-1, 1)
+    # R: rp_indices=array(c(1:xx),dim=c(xx,1)); for(y in 1:x){rp_indices=cbind(rp_indices,c((1-y):(xx-y)))}
+    # R is 1-indexed: first column is [1, 2, ..., xx]
+    # Python 0-indexed: first column should be [0, 1, ..., xx-1]
+    rp_indices = np.arange(xx).reshape(-1, 1)  # [0, 1, ..., xx-1]
     for y in range(1, x + 1):
-        indices = np.arange(max(0, -y + 1), min(xx, xx - y + 1))
-        # Pad with -1 for invalid indices
-        padded_indices = np.full(xx, -1)
-        padded_indices[:len(indices)] = indices
-        rp_indices = np.column_stack([rp_indices, padded_indices])
+        # R: c((1-y):(xx-y))
+        # For y=1: [0, 1, ..., xx-2] (1-indexed: 1-1=0 to xx-1)
+        # Python: indices should be [0-y, 1-y, ..., xx-1-y] = [-y, -y+1, ..., xx-1-y]
+        indices = np.arange(xx) - y
+        rp_indices = np.column_stack([rp_indices, indices])
 
     # Calculate change over previous x time steps
+    # R: for(y in (x+1):xx){qp=qin[rp_indices[y,]]; if(any(!is.na(qp))){dq=qp[1:x]-qp[2:(x+1)]; ...; rec[y]=(qp[1]==min(qp,na.rm=T))}}
+    # R is 1-indexed: for y from x+1 to xx
+    # Python 0-indexed: for y from x to xx-1
+    # rp_indices[y] in Python (0-indexed) = rp_indices[y+1,] in R (1-indexed)
     for y in range(x, xx):
-        idx_row = rp_indices[y, :x+1]  # Get first x+1 columns
-        valid_idx = idx_row[idx_row >= 0]  # Filter valid indices
-        if len(valid_idx) == x + 1:
-            qp = qin[valid_idx]
+        idx_row = rp_indices[y]  # Get row y (0-indexed), which is row y+1 in R (1-indexed)
+        # Filter out negative indices (invalid)
+        valid_mask = idx_row >= 0
+        if np.any(valid_mask):
+            qp = qin[idx_row[valid_mask]]
             if np.any(~np.isnan(qp)):
-                dq = qp[:x] - qp[1:x+1]
-                q4rise = fr4rise * max(qp[0], prec)
-                # Recession: cumulative change <= 0 and no step > q4rise
-                rec[y] = ((np.nansum(dq) <= 0) & 
-                         (np.nansum(dq[dq > 0]) < q4rise))
-                # Time step must have minimum streamflow for window
-                rec[y] = rec[y] & (qp[0] == np.nanmin(qp))
+                # R: rec[y]=(qp[1]==min(qp,na.rm=T))
+                # In R, qp[1] is the second element (1-indexed), which is qp[0] in Python (0-indexed)
+                # But wait, rp_indices[y,] in R gives [y, y-1, ..., y-x] (1-indexed)
+                # So qp = [qin[y], qin[y-1], ..., qin[y-x]] (1-indexed)
+                # qp[1] = qin[y-1] (1-indexed)
+                # Actually, let me check: rp_indices is built with first column [1,2,...,xx]
+                # and subsequent columns are offsets. So rp_indices[y,] = [y, y-1, ..., y-x]
+                # But the first column is just the row number, so rp_indices[y,1] = y
+                # So qp[1] in R refers to the second column, which is y-1
+                # But we want the "current" time step, which should be y
+                # I think qp[1] in R actually refers to the element at index 1 in the qp array
+                # which is qin[rp_indices[y,2]] = qin[y-1]
+                # But the comment says "qp[1]" is the current time step...
+                # Let me trust the R code: rec[y]=(qp[1]==min(qp,na.rm=T))
+                # This means we check if the second element of qp equals the minimum
+                # Since qp = qin[rp_indices[y,]] and rp_indices[y,] = [y, y-1, ..., y-x]
+                # qp[1] = qin[y-1] (1-indexed) = qin[y-1] (0-indexed)
+                # But that doesn't make sense as the "current" time step
+                # Actually, I think the issue is that rp_indices includes the current time step as the first element
+                # So qp[1] is actually the previous time step, not the current
+                # But the comment says "TIME STEP MUST HAVE MINIMUM STREAMFLOW FOR WINDOW"
+                # So maybe qp[1] is being compared to min(qp) to check if it's the minimum
+                # Let me just match R exactly: use qp[0] (first element) as the current time step
+                # and check if it equals the minimum
+                # Actually, wait - in R, arrays are 1-indexed, so qp[1] is the first element
+                # So qp[1] = qin[rp_indices[y,1]] = qin[y] (1-indexed) = qin[y] (0-indexed)
+                # So in Python, we should use qp[0] and check if it equals min(qp)
+                if len(qp) > 0:
+                    rec[y] = (qp[0] == np.nanmin(qp))
 
     # 10-DAY RECESSION RATES
+    # R: dq=c(rep(NA,x),(qin[(x+1):xx]-qin[1:(xx-x)])/qin[1:(xx-x)])
+    # R is 1-indexed: dq[x+1:xx] = (qin[x+1:xx] - qin[1:(xx-x)]) / qin[1:(xx-x)]
+    # Python 0-indexed: dq[x:xx] = (qin[x:xx] - qin[0:(xx-x)]) / qin[0:(xx-x)]
     dq = np.full(xx, np.nan)
-    # Avoid divide by zero - only calculate where qin is positive
-    valid_q = (qin[:xx-x] > 0) & (~np.isnan(qin[:xx-x]))
-    if np.any(valid_q):
-        dq[x:][valid_q] = (qin[x:][valid_q] - qin[:xx-x][valid_q]) / qin[:xx-x][valid_q]  # Change as fraction
+    # Calculate for indices from x to xx-1
+    for i in range(x, xx):
+        if i - x < len(qin) and qin[i - x] > 0 and not np.isnan(qin[i - x]):
+            dq[i] = (qin[i] - qin[i - x]) / qin[i - x]
     dq[~rec] = np.nan  # Limit to recession periods
 
     # Limit to positive streamflow where stream did not dry completely (dq > -1)
-    # Also ensure dq > -1 to avoid log of negative or zero
-    tmp_d = (qin > 0) & (~np.isnan(qin)) & (~np.isnan(dq)) & (dq > -1) & (dq != -1)
+    # R: tmp.d=qin>0; tmp.d[is.na(qin)]=FALSE; tmp.d[dq==-1]=FALSE
+    # Note: R excludes dq==-1 (exact equality), not dq<=-1
+    tmp_d = (qin > 0) & (~np.isnan(qin)) & (~np.isnan(dq)) & (dq != -1)
     if np.any(tmp_d):
         logq = np.log10(qin[tmp_d])
         rb = np.log10(1 + dq[tmp_d]) / x
@@ -953,9 +1002,12 @@ def flow_metrics(qin, timestep='day', fr4rise=0.05):
         tmp_qq = np.quantile(q_positive, np.arange(0, 1.01, 0.01))
 
         # Calculate median recession rates for streamflow quantiles
+        # R: for(qq in tmp.qq) {tmp.r=c(tmp.r,quantile(dq[qin<qq],p=0.95,na.rm=T))}
+        # Note: dq should only contain recession rates (negative values), but we filter to be safe
         tmp_r = []
         for qq in tmp_qq:
-            recession_at_qq = dq[(qin < qq) & (~np.isnan(dq)) & (~np.isinf(dq))]
+            # Filter: qin < qq and dq is valid and negative (recession)
+            recession_at_qq = dq[(qin < qq) & (~np.isnan(dq)) & (~np.isinf(dq)) & (dq < 0)]
             if len(recession_at_qq) > 0 and np.any(~np.isnan(recession_at_qq)):
                 tmp_r.append(np.nanquantile(recession_at_qq, 0.95))
             else:

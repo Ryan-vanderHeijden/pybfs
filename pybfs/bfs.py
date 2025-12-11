@@ -12,7 +12,7 @@ from .utilities import (
 )
 
 
-def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
+def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='total'):
     """Main BFS function for baseflow separation
 
     Performs physically-based baseflow separation using a coupled surface-subsurface
@@ -52,6 +52,10 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
         - rb1, rb2: Baseflow recession parameters
         - prec: Precision threshold
         - fr4rise: Fraction for rise detection
+    timestep : str, optional
+        Time step for calculations ('day' or 'hour'), default 'day'
+    error_basis : str, optional
+        Basis for error calculation ('base' or 'total'), default 'total'
 
     Returns
     -------
@@ -94,10 +98,9 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
     """
     date = pd.to_datetime(streamflow["Date"])
     qin = np.array(streamflow['Streamflow'])
+    # Remove negative flow values (matching R: qin[qin<0]=NA)
+    qin[qin < 0] = np.nan
     qmean = np.nanmean(qin)
-
-    timestep = 'day'
-    error_basis = 'total'
 
     # Error tolerance used sequentially to refine impulse
     ifact = [2, 1.1]
@@ -122,9 +125,15 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
     qthresh, rs, rb1, rb2, prec, fr4rise = flow[0], flow[1], flow[2], flow[3], flow[4], flow[5]
 
     #dqfr represents the fractional change in streamflow. #It's used to determine the nature of the change in streamflow relative to the current flow.
-    dqfr = dq / qin
-    dqfr[(dq == 0) & (qin == 0)] = 0
-    dqfr[(dq < 0) & (qin == 0)] = 1
+    # Handle divide by zero: when qin is 0, set dqfr based on conditions
+    dqfr = np.zeros_like(dq, dtype=float)
+    mask_zero_both = (dq == 0) & (qin == 0)
+    mask_neg_dq_zero_qin = (dq < 0) & (qin == 0)
+    mask_valid = qin != 0
+    
+    dqfr[mask_zero_both] = 0
+    dqfr[mask_neg_dq_zero_qin] = 1
+    dqfr[mask_valid] = dq[mask_valid] / qin[mask_valid]
 
     rise = (dqfr > fr4rise) & (dq > prec)
     rise[np.isnan(rise)] = False
@@ -190,8 +199,18 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
     sba = np.max(SBT['S']) - sb_in
 
     # Surface flow and other calculations
-    qs_in = max(0, qin[ts] - qb_in)  # Ensure surface flow is non-negative
-    zs_in = min(qs_in / (2 * lb * ks * alpha), ws * alpha)  # Saturated thickness of surface reservoir
+    # Handle NaN values (matching R's na.rm=T)
+    qs_in_val = qin[ts] - qb_in
+    if np.isnan(qs_in_val):
+        qs_in = 0
+    else:
+        qs_in = max(0, qs_in_val)  # Ensure surface flow is non-negative
+    
+    zs_in_val = qs_in / (2 * lb * ks * alpha)
+    if np.isnan(zs_in_val):
+        zs_in = ws * alpha
+    else:
+        zs_in = min(zs_in_val, ws * alpha)  # Saturated thickness of surface reservoir
     ss_in = sur_store(lb, alpha, ws, por, zs_in)  # Surface storage
     ssa = sur_store(lb, alpha, ws, por, ws * alpha) - ss_in  # AVAILABLE SURFACE STORAGE
 
@@ -254,7 +273,12 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
         ss_en = max(ss_in + infil_in - rech_in - qs_in, 0)
         zs_en = sur_z(lb, alpha, ws, por, ss_en)
         qs_en = sur_q(lb, alpha, ks, zs_en)
-        infil_en = min(infiltration(lb, ws, ks, alpha, zs_en, I[ts]), ssa)
+        # Handle NaN values in infil_en calculation (matching R's na.rm=T)
+        infil_val = infiltration(lb, ws, ks, alpha, zs_en, I[ts])
+        if np.isnan(infil_val):
+            infil_en = ssa
+        else:
+            infil_en = min(infil_val, ssa)
         rech_en = min(recharge(lb, xb_in, ws, kz, zs_en, por), sba + qb_in)
         sb_en = max(sb_in + rech_en - qb_in, 0)
         idx = max((SBT["S"] < sb_en).sum(), 1) - 1
@@ -275,6 +299,8 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
         if ts_ini:
             ST[ts, :] = [ss_en, sb_en]
             Z[ts, :] = [zs_en, zb_en]
+            # Direct runoff is NOT set for initial time step in R (remains NA), so leave as NaN
+            # qcomp[ts, 2] remains np.nan
 
         # For Time Steps When States Are Available for Previous Time Step
         if not ts_ini:
@@ -313,7 +339,12 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow):
     # WEIGHT OF 1 IS ASSIGNED TO OVER PREDICTION
     Weight[APE > 0] = 1
 
-    tmp = pd.DataFrame({'Date': date, 'Qob': qin, 'Qsim': np.sum(qcomp, axis=1), 'SurfaceFlow': qcomp[:, 0], 'Baseflow': qcomp[:, 1], 'DirectRunoff': qcomp[:, 2], 'X': X,'Eta': ETA, 'StSur': ST[:, 0], 'StBase': ST[:, 1], 'Impulse.L': I, 'Zs.L': Z[:, 0], 'Zb.L': Z[:, 1], 'Infil': EXC[:, 0], 'Rech': EXC[:, 1], 'RecessCount.T': recess_day, 'AdjPctEr': APE, 'Weight': Weight})
+    # Calculate Qsim - if any component is NaN, result should be NaN (matching R's rowSums behavior)
+    qsim = np.sum(qcomp, axis=1)
+    # R's rowSums returns NA if any element is NA, so set to NaN if any component is NaN
+    qsim[np.isnan(qcomp).any(axis=1)] = np.nan
+    
+    tmp = pd.DataFrame({'Date': date, 'Qob': qin, 'Qsim': qsim, 'SurfaceFlow': qcomp[:, 0], 'Baseflow': qcomp[:, 1], 'DirectRunoff': qcomp[:, 2], 'X': X,'Eta': ETA, 'StSur': ST[:, 0], 'StBase': ST[:, 1], 'Impulse.L': I, 'Zs.L': Z[:, 0], 'Zb.L': Z[:, 1], 'Infil': EXC[:, 0], 'Rech': EXC[:, 1], 'RecessCount.T': recess_day, 'AdjPctEr': APE, 'Weight': Weight})
     tmp = tmp[['Date', 'Qob', 'Qsim', 'SurfaceFlow', 'Baseflow', 'DirectRunoff',  'X','Eta', 'StSur', 'StBase', 'Impulse.L', 'Zs.L', 'Zb.L', 'Infil', 'Rech', 'RecessCount.T', 'AdjPctEr', 'Weight']]
     return tmp
 
