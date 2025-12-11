@@ -34,13 +34,25 @@ PyBFS implements the methodology described in the USGS Scientific Investigations
 
 This Python implementation brings the BFS methodology to the Python scientific computing ecosystem. The package includes the core BFS functions for baseflow table generation, the separation algorithm itself, and forecasting capabilities. Built-in visualization tools allow users to quickly plot and analyze their results without needing to write custom plotting code. The implementation includes utilities for parameter management that help users extract and organize the site-specific parameters required by the model. To enable efficient computation even with long time series, the implementation uses a lookup table approach that allows rapid baseflow calculations without repeatedly solving complex equations at each time step.
 
+### Parameter Calibration
+
+PyBFS includes a comprehensive calibration system that automatically optimizes model parameters to match observed streamflow behavior. The calibration process uses a multi-step optimization approach that:
+
+- **Automatically estimates flow metrics** from the streamflow time series, including recession coefficients, flow thresholds, and precision parameters
+- **Optimizes basin geometry parameters** (basin length, width, and shape parameters) to match observed recession behavior
+- **Calibrates hydraulic conductivity values** for surface, base, and vertical flow pathways
+- **Tests multiple baseflow function shapes** (beta parameter) to find the optimal non-linear relationship between storage and discharge
+- **Maximizes baseflow fraction** while minimizing prediction error, ensuring physically realistic parameter values
+
+The calibration function (`bfs_calibrate`) returns optimized parameters that can be used directly for baseflow separation, eliminating the need for manual parameter estimation. This makes PyBFS accessible to users who may not have detailed basin characteristics or hydraulic property measurements. The calibration process follows the methodology described in the USGS BFS manual (see `refs/usgs_bfs_manual.pdf`), ensuring consistency with the original R implementation.
+
 ## Quick Links
 
 [Installation](user-guide/installation.md) | [User Guide](user-guide/overview.md) | [Usage Examples](user-guide/examples.md) | [API Reference](api/reference.md)
 
 ## Key Features
 
-PyBFS is a **physically-based model** that uses actual basin geometry and hydraulic properties rather than empirical coefficients. The **non-linear state-space framework** captures the complex dynamics of baseflow response to changing storage conditions. The **baseflow forecasting** capability allows projection of future baseflow during dry periods when precipitation is minimal or absent. The model provides **comprehensive output** including not just baseflow but also surface flow, direct runoff, and internal storage states, giving users a complete picture of watershed hydrology. Built-in **visualization functions** simplify the process of examining model results and comparing simulated versus observed streamflow. The approach is **well-tested**, having been calibrated and validated across thousands of USGS streamgages representing diverse hydrological settings.
+PyBFS is a **physically-based model** that uses actual basin geometry and hydraulic properties rather than empirical coefficients. The **non-linear state-space framework** captures the complex dynamics of baseflow response to changing storage conditions. The **baseflow forecasting** capability allows projection of future baseflow during dry periods when precipitation is minimal or absent. The model provides **comprehensive output** including not just baseflow but also surface flow, direct runoff, and internal storage states, giving users a complete picture of watershed hydrology. Built-in **visualization functions** simplify the process of examining model results and comparing simulated versus observed streamflow. The **automatic parameter calibration** system optimizes model parameters from streamflow data alone, making the model accessible even without detailed basin measurements. The approach is **well-tested**, having been calibrated and validated across thousands of USGS streamgages representing diverse hydrological settings.
 
 ## Applications
 
