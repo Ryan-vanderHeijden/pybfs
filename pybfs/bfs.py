@@ -7,12 +7,224 @@ a coupled surface-subsurface reservoir model.
 
 import numpy as np
 import pandas as pd
+import math
 from .utilities import (
     sur_z, sur_store, sur_q, dir_q, infiltration, recharge
 )
 
+try:
+    from numba import jit
+    from .utilities import (
+        sur_z_jit, sur_store_jit, sur_q_jit, dir_q_jit, 
+        infiltration_jit, recharge_jit
+    )
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
 
-def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='total'):
+
+if HAS_NUMBA:
+    @jit(nopython=True, cache=True)
+    def _bfs_core_loop(qin, sbt_xb, sbt_z, sbt_s, sbt_q, rise, p, 
+                       lb, alpha, ws, por, ks, kz, prec, ifact, qmean,
+                       X, qcomp, ETA, I, Z, ST, EXC):
+        """
+        JIT-compiled core computation loop for BFS algorithm.
+        This is the computationally intensive part that benefits from JIT.
+        """
+        # Find first valid time step
+        ts = 0
+        while ts < p and math.isnan(qin[ts]):
+            ts += 1
+        
+        if ts >= p:
+            return
+        
+        # Initialization
+        ts_ini = True
+        qb_in = min(qin[ts], qmean)
+        
+        # Find index in SBT - match original: (SBT["Q"] <= qb_in).sum() - 1
+        idx = 0
+        for i in range(len(sbt_q)):
+            if sbt_q[i] <= qb_in:
+                idx = i + 1  # Count (like .sum())
+            else:
+                break
+        idx = idx - 1 if idx > 0 else -1  # Convert count to index (idx - 1)
+        
+        xb_in = sbt_xb[idx] if idx >= 0 and idx < len(sbt_xb) else np.nan
+        zb_in = sbt_z[idx] if idx >= 0 and idx < len(sbt_z) else np.nan
+        sb_in = sbt_s[idx] if idx >= 0 and idx < len(sbt_s) else np.nan
+        
+        # Calculate available base storage
+        sba = 0.0
+        for i in range(len(sbt_s)):
+            if sbt_s[i] > sba:
+                sba = sbt_s[i]
+        sba = sba - sb_in
+        
+        # Surface flow calculations
+        qs_in_val = qin[ts] - qb_in
+        if math.isnan(qs_in_val):
+            qs_in = 0.0
+        else:
+            qs_in = max(0.0, qs_in_val)
+        
+        zs_in_val = qs_in / (2 * lb * ks * alpha)
+        if math.isnan(zs_in_val):
+            zs_in = ws * alpha
+        else:
+            zs_in = min(zs_in_val, ws * alpha)
+        
+        ss_in = sur_store_jit(lb, alpha, ws, por, zs_in)
+        ssa = sur_store_jit(lb, alpha, ws, por, ws * alpha) - ss_in
+        
+        infil_in = 0.0
+        rech_in = recharge_jit(lb, xb_in, ws, kz, zs_in, por)
+        
+        # Main time step loop - this is the bottleneck
+        while ts < p:
+            if not ts_ini:
+                xb_in = X[ts - 1]
+                zb_in = Z[ts - 1, 1]
+                sb_in = ST[ts - 1, 1]
+                
+                # Find index in SBT - match original: (SBT["Xb"] <= xb_in).sum() - 1
+                idx = 0
+                for i in range(len(sbt_xb)):
+                    if sbt_xb[i] <= xb_in:
+                        idx = i + 1  # Count (like .sum())
+                    else:
+                        break
+                idx = idx - 1 if idx > 0 else -1  # Convert count to index (idx - 1)
+                qb_in = sbt_q[idx] if idx >= 0 and idx < len(sbt_q) else np.nan
+                
+                zs_in = Z[ts - 1, 0]
+                ss_in = ST[ts - 1, 0]
+                qs_in = sur_q_jit(lb, alpha, ks, zs_in)
+                
+                ssa = sur_store_jit(lb, alpha, ws, por, ws * alpha) - ss_in
+                sba = 0.0
+                for i in range(len(sbt_s)):
+                    if sbt_s[i] > sba:
+                        sba = sbt_s[i]
+                sba = sba - sb_in
+                rech_in = min(recharge_jit(lb, xb_in, ws, kz, zs_in, por), sba + qb_in)
+                qd = 0.0
+                infil_in = 0.0
+                
+                I[ts] = 0.0
+                etaest = max(0.0, qin[ts] - qb_in - qs_in)
+                
+                # Impulse calculation loop - nested loops, computationally intensive
+                if ts > 0 and etaest > 0:
+                    if rise[ts] or (ts > 0 and rise[ts - 1]):
+                        I[ts] = etaest / (2 * lb * ws)
+                        zs = zs_in
+                        qs = qs_in
+                        
+                        for x in ifact:
+                            i = I[ts]
+                            eta = etaest
+                            while eta > max(prec, qin[ts] / 100) and i > 0:
+                                I[ts] = i
+                                etaest = eta
+                                i = x * i
+                                infil = min(infiltration_jit(lb, ws, ks, alpha, (zs_in + zs) / 2, i), ssa)
+                                ss = max(ss_in + infil - rech_in - qs, 0.0)
+                                zs = sur_z_jit(lb, alpha, ws, por, ss)
+                                qs = sur_q_jit(lb, alpha, ks, zs)
+                                qd = (dir_q_jit(lb, alpha, zs_in, i) + 
+                                      dir_q_jit(lb, alpha, (zs - zs_in), i / 2) + 
+                                      max(2 * lb * (ws - zs_in / alpha) * (I[ts] - ks), 0.0))
+                                eta = qin[ts] - qs - qd - qb_in
+                
+                infil_in = min(infiltration_jit(lb, ws, ks, alpha, zs_in, I[ts]), ssa)
+            
+            # End of time step calculations
+            ss_en = max(ss_in + infil_in - rech_in - qs_in, 0.0)
+            zs_en = sur_z_jit(lb, alpha, ws, por, ss_en)
+            qs_en = sur_q_jit(lb, alpha, ks, zs_en)
+            
+            infil_val = infiltration_jit(lb, ws, ks, alpha, zs_en, I[ts])
+            if math.isnan(infil_val):
+                infil_en = ssa
+            else:
+                infil_en = min(infil_val, ssa)
+            
+            rech_en = min(recharge_jit(lb, xb_in, ws, kz, zs_en, por), sba + qb_in)
+            sb_en = max(sb_in + rech_en - qb_in, 0.0)
+            
+            # Find index in SBT - match original: max((SBT["S"] < sb_en).sum(), 1) - 1
+            idx = 0
+            for i in range(len(sbt_s)):
+                if sbt_s[i] < sb_en:
+                    idx = i + 1  # Count (like .sum())
+                else:
+                    break
+            idx = max(idx, 1) - 1  # max(count, 1) - 1
+            
+            xb_en = sbt_xb[idx] if 0 <= idx < len(sbt_xb) else np.nan
+            zb_en = sbt_z[idx] if 0 <= idx < len(sbt_z) else np.nan
+            qb_en = sbt_q[idx] if 0 <= idx < len(sbt_q) else np.nan
+            
+            # Final calculations
+            qcomp[ts, 0] = (qs_in + qs_en) / 2
+            qcomp[ts, 1] = (qb_in + qb_en) / 2
+            
+            EXC[ts, 0] = (infil_in + infil_en) / 2
+            EXC[ts, 1] = (rech_in + rech_en) / 2
+            
+            if ts_ini:
+                ST[ts, 0] = ss_en
+                ST[ts, 1] = sb_en
+                Z[ts, 0] = zs_en
+                Z[ts, 1] = zb_en
+            
+            if not ts_ini:
+                ST[ts, 0] = max(ST[ts - 1, 0] + EXC[ts, 0] - qcomp[ts, 0] - EXC[ts, 1], 0.0)
+                ST[ts, 0] = min(ST[ts, 0], sur_store_jit(lb, alpha, ws, por, ws * alpha))
+                Z[ts, 0] = sur_z_jit(lb, alpha, ws, por, ST[ts, 0])
+                ST[ts, 1] = max(ST[ts - 1, 1] + EXC[ts, 1] - qcomp[ts, 1], 0.0)
+                
+                max_s = 0.0
+                for i in range(len(sbt_s)):
+                    if sbt_s[i] > max_s:
+                        max_s = sbt_s[i]
+                ST[ts, 1] = min(ST[ts, 1], max_s)
+                
+                # Find index in SBT - match original: max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
+                idx = 0
+                for i in range(len(sbt_s)):
+                    if sbt_s[i] <= ST[ts, 1]:
+                        idx = i + 1  # Count (like .sum())
+                    else:
+                        break
+                idx = max(idx, 1) - 1  # max(count, 1) - 1
+                Z[ts, 1] = sbt_z[idx] if idx >= 0 and idx < len(sbt_z) else np.nan
+                
+                qcomp[ts, 2] = (dir_q_jit(lb, alpha, zs_in, I[ts]) + 
+                               dir_q_jit(lb, alpha, (Z[ts, 0] - zs_in), I[ts] / 2) + 
+                               max(2 * lb * (ws - zs_in / alpha) * (I[ts] - ks), 0.0))
+            
+            ETA[ts] = qin[ts] - (qcomp[ts, 0] + qcomp[ts, 1] + qcomp[ts, 2])
+            
+            # Find index in SBT - match original: max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
+            idx = 0
+            for i in range(len(sbt_s)):
+                if sbt_s[i] <= ST[ts, 1]:
+                    idx = i + 1  # Count (like .sum())
+                else:
+                    break
+            idx = max(idx, 1) - 1  # max(count, 1) - 1
+            X[ts] = sbt_xb[idx] if idx >= 0 and idx < len(sbt_xb) else np.nan
+            
+            ts += 1
+            ts_ini = False
+
+
+def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='total', use_jit=True):
     """Main BFS function for baseflow separation
 
     Performs physically-based baseflow separation using a coupled surface-subsurface
@@ -56,6 +268,9 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
         Time step for calculations ('day' or 'hour'), default 'day'
     error_basis : str, optional
         Basis for error calculation ('base' or 'total'), default 'total'
+    use_jit : bool, optional
+        Whether to use NUMBA JIT compilation for faster computation (default True).
+        Falls back to original implementation if NUMBA is not available.
 
     Returns
     -------
@@ -218,111 +433,126 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
     infil_in = 0
     rech_in = recharge(lb, xb_in, ws, kz, zs_in, por)
 
-    while ts < p:
+    # Use JIT-compiled core loop if available and requested
+    if use_jit and HAS_NUMBA:
+        # Convert SBT DataFrame to numpy arrays for JIT
+        sbt_xb = np.array(SBT['Xb'].values)
+        sbt_z = np.array(SBT['Z'].values)
+        sbt_s = np.array(SBT['S'].values)
+        sbt_q = np.array(SBT['Q'].values)
+        ifact_arr = np.array(ifact)
+        
+        # Call JIT-compiled core loop
+        _bfs_core_loop(qin, sbt_xb, sbt_z, sbt_s, sbt_q, rise, p,
+                       lb, alpha, ws, por, ks, kz, prec, ifact_arr, qmean,
+                       X, qcomp, ETA, I, Z, ST, EXC)
+    else:
+        # Original implementation - keep the while loop as-is
+        while ts < p:
 
-        # Initialize Time Step Using State Variables for Previous Time Step if Available
-        if not ts_ini:
-            xb_in = X[ts - 1]
-            zb_in = Z[ts - 1, 1]
-            sb_in = ST[ts - 1, 1]
+            # Initialize Time Step Using State Variables for Previous Time Step if Available
+            if not ts_ini:
+                xb_in = X[ts - 1]
+                zb_in = Z[ts - 1, 1]
+                sb_in = ST[ts - 1, 1]
 
-            idx = (SBT["Xb"] <= xb_in).sum()
-            qb_in = SBT["Q"].iloc[idx - 1] if idx > 0 else np.nan
+                idx = (SBT["Xb"] <= xb_in).sum()
+                qb_in = SBT["Q"].iloc[idx - 1] if idx > 0 else np.nan
 
-            zs_in = Z[ts - 1, 0]
-            ss_in = ST[ts - 1, 0]
-            qs_in = sur_q(lb, alpha, ks, zs_in)
+                zs_in = Z[ts - 1, 0]
+                ss_in = ST[ts - 1, 0]
+                qs_in = sur_q(lb, alpha, ks, zs_in)
 
-            # Storage Capacity Available
-            ssa = sur_store(lb, alpha, ws, por, ws * alpha) - ss_in
-            sba = max(SBT['S']) - sb_in
-            rech_in = min(recharge(lb, xb_in, ws, kz, zs_in, por), sba + qb_in)
-            qd = 0
-            infil_in = 0
+                # Storage Capacity Available
+                ssa = sur_store(lb, alpha, ws, por, ws * alpha) - ss_in
+                sba = max(SBT['S']) - sb_in
+                rech_in = min(recharge(lb, xb_in, ws, kz, zs_in, por), sba + qb_in)
+                qd = 0
+                infil_in = 0
 
-            # Impulse (PPT) Needed to Generate Observed Streamflow
-            I[ts] = 0  # Set Impulse to Zero
-            etaest = max(0, qin[ts] - qb_in - qs_in)
+                # Impulse (PPT) Needed to Generate Observed Streamflow
+                I[ts] = 0  # Set Impulse to Zero
+                etaest = max(0, qin[ts] - qb_in - qs_in)
 
-            # Initial Estimate of Impulse Required for Additional Surface Flow
-            if ts > 1 and etaest > 0:
-                if rise[ts] or rise[ts - 1]:
-                    I[ts] = etaest / (2 * lb * ws)
-                    zs = zs_in
-                    qs = qs_in
+                # Initial Estimate of Impulse Required for Additional Surface Flow
+                if ts > 1 and etaest > 0:
+                    if rise[ts] or rise[ts - 1]:
+                        I[ts] = etaest / (2 * lb * ws)
+                        zs = zs_in
+                        qs = qs_in
 
-                    # Loop to Calculate Additional Impulse Needed to Reduce ETA
-                    # Use Progressively Smaller Incremental Changes in Impulse (ifact) for Iterations
-                    for x in ifact:
-                        i = I[ts]
-                        eta = etaest
-                        while eta > max(prec, qin[ts] / 100) and i > 0:
-                            I[ts] = i
-                            etaest = eta
-                            i = x * i
-                            infil = min(infiltration(lb, ws, ks, alpha, (zs_in + zs) / 2, i), ssa)  # Limit Infiltration to Available Storage
-                            ss = max(ss_in + infil - rech_in - qs, 0)  # Update Surface Storage
-                            zs = sur_z(lb, alpha, ws, por, ss)
-                            qs = sur_q(lb, alpha, ks, zs)
-                            qd = dir_q(lb, alpha, zs_in, i) + dir_q(lb, alpha, (zs - zs_in), i / 2) + max(2 * lb * (ws - zs_in / alpha) * (I[ts] - ks), 0)
-                            eta = qin[ts] - qs - qd - qb_in
+                        # Loop to Calculate Additional Impulse Needed to Reduce ETA
+                        # Use Progressively Smaller Incremental Changes in Impulse (ifact) for Iterations
+                        for x in ifact:
+                            i = I[ts]
+                            eta = etaest
+                            while eta > max(prec, qin[ts] / 100) and i > 0:
+                                I[ts] = i
+                                etaest = eta
+                                i = x * i
+                                infil = min(infiltration(lb, ws, ks, alpha, (zs_in + zs) / 2, i), ssa)  # Limit Infiltration to Available Storage
+                                ss = max(ss_in + infil - rech_in - qs, 0)  # Update Surface Storage
+                                zs = sur_z(lb, alpha, ws, por, ss)
+                                qs = sur_q(lb, alpha, ks, zs)
+                                qd = dir_q(lb, alpha, zs_in, i) + dir_q(lb, alpha, (zs - zs_in), i / 2) + max(2 * lb * (ws - zs_in / alpha) * (I[ts] - ks), 0)
+                                eta = qin[ts] - qs - qd - qb_in
 
-            infil_in = min(infiltration(lb, ws, ks, alpha, zs_in, I[ts]), ssa)  # Close Initial Calculations When Streamflow Record is Available (Not Projection)
+                infil_in = min(infiltration(lb, ws, ks, alpha, zs_in, I[ts]), ssa)  # Close Initial Calculations When Streamflow Record is Available (Not Projection)
 
-        # End of Time Step Calculations
-        ss_en = max(ss_in + infil_in - rech_in - qs_in, 0)
-        zs_en = sur_z(lb, alpha, ws, por, ss_en)
-        qs_en = sur_q(lb, alpha, ks, zs_en)
-        # Handle NaN values in infil_en calculation (matching R's na.rm=T)
-        infil_val = infiltration(lb, ws, ks, alpha, zs_en, I[ts])
-        if np.isnan(infil_val):
-            infil_en = ssa
-        else:
-            infil_en = min(infil_val, ssa)
-        rech_en = min(recharge(lb, xb_in, ws, kz, zs_en, por), sba + qb_in)
-        sb_en = max(sb_in + rech_en - qb_in, 0)
-        idx = max((SBT["S"] < sb_en).sum(), 1) - 1
+            # End of Time Step Calculations
+            ss_en = max(ss_in + infil_in - rech_in - qs_in, 0)
+            zs_en = sur_z(lb, alpha, ws, por, ss_en)
+            qs_en = sur_q(lb, alpha, ks, zs_en)
+            # Handle NaN values in infil_en calculation (matching R's na.rm=T)
+            infil_val = infiltration(lb, ws, ks, alpha, zs_en, I[ts])
+            if np.isnan(infil_val):
+                infil_en = ssa
+            else:
+                infil_en = min(infil_val, ssa)
+            rech_en = min(recharge(lb, xb_in, ws, kz, zs_en, por), sba + qb_in)
+            sb_en = max(sb_in + rech_en - qb_in, 0)
+            idx = max((SBT["S"] < sb_en).sum(), 1) - 1
 
-        # Safely extract the values from the DataFrame
-        xb_en = SBT["Xb"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
-        zb_en = SBT["Z"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
-        qb_en = SBT["Q"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+            # Safely extract the values from the DataFrame
+            xb_en = SBT["Xb"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+            zb_en = SBT["Z"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+            qb_en = SBT["Q"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
 
-        # Final Calculations for Time Step
-        qcomp[ts, 0] = (qs_in + qs_en) / 2  # Surface Flow
-        qcomp[ts, 1] = (qb_in + qb_en) / 2  # Base Flow
+            # Final Calculations for Time Step
+            qcomp[ts, 0] = (qs_in + qs_en) / 2  # Surface Flow
+            qcomp[ts, 1] = (qb_in + qb_en) / 2  # Base Flow
 
-        EXC[ts, 0] = (infil_in + infil_en) / 2
-        EXC[ts, 1] = (rech_in + rech_en) / 2
+            EXC[ts, 0] = (infil_in + infil_en) / 2
+            EXC[ts, 1] = (rech_in + rech_en) / 2
 
-        # For Initial Time Step
-        if ts_ini:
-            ST[ts, :] = [ss_en, sb_en]
-            Z[ts, :] = [zs_en, zb_en]
-            # Direct runoff is NOT set for initial time step in R (remains NA), so leave as NaN
-            # qcomp[ts, 2] remains np.nan
+            # For Initial Time Step
+            if ts_ini:
+                ST[ts, :] = [ss_en, sb_en]
+                Z[ts, :] = [zs_en, zb_en]
+                # Direct runoff is NOT set for initial time step in R (remains NA), so leave as NaN
+                # qcomp[ts, 2] remains np.nan
 
-        # For Time Steps When States Are Available for Previous Time Step
-        if not ts_ini:
-            ST[ts, 0] = max(ST[ts - 1, 0] + EXC[ts, 0] - qcomp[ts, 0] - EXC[ts, 1], 0)
-            ST[ts, 0] = min(ST[ts, 0], sur_store(lb, alpha, ws, por, ws * alpha))
-            Z[ts, 0] = sur_z(lb, alpha, ws, por, ST[ts, 0])
-            ST[ts, 1] = max(ST[ts - 1, 1] + EXC[ts, 1] - qcomp[ts, 1], 0)
-            ST[ts, 1] = min(ST[ts, 1], max(SBT['S']))
+            # For Time Steps When States Are Available for Previous Time Step
+            if not ts_ini:
+                ST[ts, 0] = max(ST[ts - 1, 0] + EXC[ts, 0] - qcomp[ts, 0] - EXC[ts, 1], 0)
+                ST[ts, 0] = min(ST[ts, 0], sur_store(lb, alpha, ws, por, ws * alpha))
+                Z[ts, 0] = sur_z(lb, alpha, ws, por, ST[ts, 0])
+                ST[ts, 1] = max(ST[ts - 1, 1] + EXC[ts, 1] - qcomp[ts, 1], 0)
+                ST[ts, 1] = min(ST[ts, 1], max(SBT['S']))
 
+                idx = max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
+                Z[ts, 1] = SBT['Z'].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+
+                # Direct Runoff includes additional saturated area x half of rainfall (excess after infiltration), and any precipitation that exceeds infiltration rate
+                qcomp[ts, 2] = dir_q(lb, alpha, zs_in, I[ts]) + dir_q(lb, alpha, (Z[ts, 0] - zs_in), I[ts] / 2) + max(2 * lb * (ws - zs_in / alpha) * (I[ts] - ks), 0)
+
+            ETA[ts] = qin[ts] - np.sum(qcomp[ts, 0:3])  # Streamflow Residual
             idx = max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
-            Z[ts, 1] = SBT['Z'].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+            X[ts] = SBT['Xb'].iloc[idx] if 0 <= idx < len(SBT) else np.nan
 
-            # Direct Runoff includes additional saturated area x half of rainfall (excess after infiltration), and any precipitation that exceeds infiltration rate
-            qcomp[ts, 2] = dir_q(lb, alpha, zs_in, I[ts]) + dir_q(lb, alpha, (Z[ts, 0] - zs_in), I[ts] / 2) + max(2 * lb * (ws - zs_in / alpha) * (I[ts] - ks), 0)
-
-        ETA[ts] = qin[ts] - np.sum(qcomp[ts, 0:3])  # Streamflow Residual
-        idx = max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
-        X[ts] = SBT['Xb'].iloc[idx] if 0 <= idx < len(SBT) else np.nan
-
-        ts += 1
-        ts_ini = False
-        #CLOSE CONDITION ts<p
+            ts += 1
+            ts_ini = False
+            #CLOSE CONDITION ts<p
 
     if error_basis == 'base':
         q4er = qcomp[:, 1]
