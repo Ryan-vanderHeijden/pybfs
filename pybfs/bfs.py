@@ -12,15 +12,12 @@ from .utilities import (
     sur_z, sur_store, sur_q, dir_q, infiltration, recharge
 )
 
-try:
-    from numba import jit
-    from .utilities import (
-        sur_z_jit, sur_store_jit, sur_q_jit, dir_q_jit, 
-        infiltration_jit, recharge_jit
-    )
-    HAS_NUMBA = True
-except ImportError:
-    HAS_NUMBA = False
+from numba import jit
+from .utilities import (
+    sur_z_jit, sur_store_jit, sur_q_jit, dir_q_jit,
+    infiltration_jit, recharge_jit
+)
+HAS_NUMBA = True
 
 
 if HAS_NUMBA:
@@ -270,7 +267,7 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
         Basis for error calculation ('base' or 'total'), default 'total'
     use_jit : bool, optional
         Whether to use NUMBA JIT compilation for faster computation (default True).
-        Falls back to original implementation if NUMBA is not available.
+        If False, uses the non-JIT Python implementation.
 
     Returns
     -------
@@ -433,8 +430,8 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
     infil_in = 0
     rech_in = recharge(lb, xb_in, ws, kz, zs_in, por)
 
-    # Use JIT-compiled core loop if available and requested
-    if use_jit and HAS_NUMBA:
+    # Use JIT-compiled core loop if requested
+    if use_jit:
         # Convert SBT DataFrame to numpy arrays for JIT
         sbt_xb = np.array(SBT['Xb'].values)
         sbt_z = np.array(SBT['Z'].values)

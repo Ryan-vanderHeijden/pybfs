@@ -10,22 +10,9 @@ import numpy as np
 import pandas as pd
 import math
 
-try:
-    from statsmodels.regression.quantile_regression import QuantReg
-    HAS_STATSMODELS = True
-except ImportError:
-    HAS_STATSMODELS = False
+from statsmodels.regression.quantile_regression import QuantReg
 
-try:
-    from numba import jit
-    HAS_NUMBA = True
-except ImportError:
-    HAS_NUMBA = False
-    # Create a dummy jit decorator if numba is not available
-    def jit(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
+from numba import jit
 
 
 def sur_z(lb, a, ws, por, ss):
@@ -232,55 +219,51 @@ def recharge(lb, xb, ws, kz, zs, por):
 
 
 # JIT-compiled versions of utility functions for performance
-if HAS_NUMBA:
-    @jit(nopython=True, cache=True)
-    def sur_z_jit(lb, a, ws, por, ss):
-        """JIT-compiled version of sur_z"""
-        a1 = 1 / (2 * a)
-        b1 = -2 * ws
-        c1 = ss / (lb * por)
-        
-        discriminant = b1 ** 2 - 4 * a1 * c1
-        
-        if discriminant < 0:
-            return ws * a
-        else:
-            return (-b1 - math.sqrt(discriminant)) / (2 * a1)
+@jit(nopython=True, cache=True)
+def sur_z_jit(lb, a, ws, por, ss):
+    """JIT-compiled version of sur_z"""
+    a1 = 1 / (2 * a)
+    b1 = -2 * ws
+    c1 = ss / (lb * por)
+    
+    discriminant = b1 ** 2 - 4 * a1 * c1
+    
+    if discriminant < 0:
+        return ws * a
+    else:
+        return (-b1 - math.sqrt(discriminant)) / (2 * a1)
 
-    @jit(nopython=True, cache=True)
-    def sur_store_jit(lb, a, ws, por, zs):
-        """JIT-compiled version of sur_store"""
-        z = min(ws * a, zs)
-        result = lb * (2 * ws * zs - zs**2 / a) * por
-        return result
 
-    @jit(nopython=True, cache=True)
-    def sur_q_jit(lb, a, ks, z):
-        """JIT-compiled version of sur_q"""
-        return 2 * lb * z * a * ks
+@jit(nopython=True, cache=True)
+def sur_store_jit(lb, a, ws, por, zs):
+    """JIT-compiled version of sur_store"""
+    z = min(ws * a, zs)
+    result = lb * (2 * ws * zs - zs**2 / a) * por
+    return result
 
-    @jit(nopython=True, cache=True)
-    def dir_q_jit(lb, a, z, i):
-        """JIT-compiled version of dir_q"""
-        return 2 * lb * z / a * i
 
-    @jit(nopython=True, cache=True)
-    def infiltration_jit(lb, ws, ks, a, zs, i):
-        """JIT-compiled version of infiltration"""
-        return 2 * lb * (ws - zs / a) * min(i, ks)
+@jit(nopython=True, cache=True)
+def sur_q_jit(lb, a, ks, z):
+    """JIT-compiled version of sur_q"""
+    return 2 * lb * z * a * ks
 
-    @jit(nopython=True, cache=True)
-    def recharge_jit(lb, xb, ws, kz, zs, por):
-        """JIT-compiled version of recharge"""
-        return (lb - xb) * 2 * ws * min(zs * por, kz)
-else:
-    # Fallback to regular functions if numba not available
-    sur_z_jit = sur_z
-    sur_store_jit = sur_store
-    sur_q_jit = sur_q
-    dir_q_jit = dir_q
-    infiltration_jit = infiltration
-    recharge_jit = recharge
+
+@jit(nopython=True, cache=True)
+def dir_q_jit(lb, a, z, i):
+    """JIT-compiled version of dir_q"""
+    return 2 * lb * z / a * i
+
+
+@jit(nopython=True, cache=True)
+def infiltration_jit(lb, ws, ks, a, zs, i):
+    """JIT-compiled version of infiltration"""
+    return 2 * lb * (ws - zs / a) * min(i, ks)
+
+
+@jit(nopython=True, cache=True)
+def recharge_jit(lb, xb, ws, kz, zs, por):
+    """JIT-compiled version of recharge"""
+    return (lb - xb) * 2 * ws * min(zs * por, kz)
 
 
 def get_values_for_site(df, site_no):
@@ -738,8 +721,7 @@ def flow_metrics(qin, timestep='day', fr4rise=0.05):
 
     Notes
     -----
-    This function requires the statsmodels package for quantile regression.
-    Install with: pip install statsmodels
+    This function uses `statsmodels` for quantile regression.
 
     The function:
     1. Calculates precision from measurement resolution
@@ -756,11 +738,6 @@ def flow_metrics(qin, timestep='day', fr4rise=0.05):
     >>> metrics = flow_metrics(streamflow, timestep='day', fr4rise=0.05)
     >>> qthresh, rs, rb1, rb2, prec, fr4rise = metrics
     """
-    if not HAS_STATSMODELS:
-        raise ImportError(
-            "flow_metrics requires statsmodels. Install with: pip install statsmodels"
-        )
-
     qin = np.array(qin, dtype=float)
     xx = len(qin)
 

@@ -16,25 +16,6 @@ import pybfs
 def main():
     """Main execution function for calibration testing"""
 
-    # Check for NUMBA installation
-    try:
-        import numba
-        numba_installed = True
-    except ImportError:
-        numba_installed = False
-    
-    if not numba_installed:
-        print("\n" + "="*80)
-        print(" " * 20 + "⚠️  WARNING: NUMBA NOT INSTALLED ⚠️")
-        print("="*80)
-        print("\n" + " " * 10 + "NUMBA is not installed on this system.")
-        print(" " * 10 + "The calibration process will be VERY SLOW without NUMBA.")
-        print(" " * 10 + "Installation is strongly recommended for reasonable performance.")
-        print("\n" + " " * 10 + "To install NUMBA, run:")
-        print(" " * 10 + "    pip install numba")
-        print("\n" + " " * 10 + "Continuing with calibration (this may take a very long time)...")
-        print("="*80 + "\n")
-
     # Site information
     site_id = "12167000"
     site_area = 6.71e+08  # m² (from siteinfo file)

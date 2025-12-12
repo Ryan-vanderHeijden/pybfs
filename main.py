@@ -20,6 +20,7 @@ def main():
     # Load streamflow data
     print("Loading streamflow data...")
     streamflow_data = pd.read_csv('docs/files/2312200_data.csv')
+    streamflow_data['Date'] = pd.to_datetime(streamflow_data['Date'])
 
     # Load site parameters
     print("Loading site parameters...")
@@ -69,15 +70,14 @@ def main():
     # === FORECASTING EXAMPLE ===
     print("\n=== Running Forecast Example ===")
 
-    # Filter data for calibration period (Jan-Sep 2018)
+    # Filter data for training period (Jan-Sep 2018)
     start_date = '2018-01-01'
     end_date = '2018-09-30'
-    streamflow_data['Date'] = pd.to_datetime(streamflow_data['Date'])
     streamflow_data_filtered = streamflow_data[
         (streamflow_data['Date'] >= start_date) & (streamflow_data['Date'] <= end_date)
     ]
 
-    print(f"Running BFS for calibration period ({start_date} to {end_date})...")
+    print(f"Running BFS for training period ({start_date} to {end_date})...")
     tmp2 = pybfs.bfs(streamflow_data_filtered, SBT, basin_char, gw_hyd, flow)
 
     # Extract initial conditions from last time step
@@ -99,19 +99,30 @@ def main():
     f = pybfs.forecast(forecast_df, SBT, basin_char, gw_hyd, flow, ini)
     print(f"Forecast completed for {len(f)} time steps")
 
-    # Plot forecast
-    print("\nPlotting baseflow forecast...")
-    pybfs.plot_forecast_baseflow(f)
+    # Plot training (solid) + forecast (dashed) in one figure
+    forecast_start = "2018-10-01"
+    forecast_end = "2018-11-30"
+    print("\nPlotting training + forecast baseflow...")
+    pybfs.plot_forecast(
+        training_streamflow=streamflow_data_filtered,
+        training_bfs=tmp2,
+        forecast_data=f,
+        title=f"Training ({start_date} to {end_date}) + Forecast ({forecast_start} to {forecast_end})",
+    )
 
-    # Plot forecast with observed data for comparison
-    forecast_start = '2018-10-01'
-    forecast_end = '2018-11-30'
-    streamflow_data_forecast = streamflow_data[
-        (streamflow_data['Date'] >= forecast_start) & (streamflow_data['Date'] <= forecast_end)
-    ]
+    # # Plot forecast
+    # print("\nPlotting baseflow forecast...")
+    # pybfs.plot_forecast_baseflow(f)
 
-    print("\nPlotting forecast with observed streamflow...")
-    pybfs.plot_forecast_baseflow_streamflow(f, streamflow_data_forecast)
+    # # Plot forecast with observed data for comparison
+    # forecast_start = '2018-10-01'
+    # forecast_end = '2018-11-30'
+    # streamflow_data_forecast = streamflow_data[
+    #     (streamflow_data['Date'] >= forecast_start) & (streamflow_data['Date'] <= forecast_end)
+    # ]
+
+    # print("\nPlotting forecast with observed streamflow...")
+    # pybfs.plot_forecast_baseflow_streamflow(f, streamflow_data_forecast)
 
     print("\n=== Analysis Complete ===")
 

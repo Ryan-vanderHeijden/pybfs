@@ -4,7 +4,7 @@
 A Python implementation of Baseflow Separation algorithms for hydrological analysis.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "BYU Hydroinformatics"
 __email__ = ""
 
@@ -29,6 +29,7 @@ from .bfs import bfs
 # Import from plot module
 from .plot import (
     plot_baseflow_simulation,
+    plot_forecast,
     plot_forecast_baseflow,
     plot_forecast_baseflow_streamflow,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "cal_base",
     "cal_surface",
     "plot_baseflow_simulation",
+    "plot_forecast",
     "plot_forecast_baseflow",
     "plot_forecast_baseflow_streamflow",
 ]

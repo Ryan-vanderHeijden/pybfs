@@ -2,6 +2,19 @@
 
 This page demonstrates practical applications of PyBFS for baseflow separation and forecasting.
 
+## Interactive notebook (Google Colab)
+
+If you want to run these examples in a browser (no local setup), use the Colab notebook:
+
+<a href="https://colab.research.google.com/github/BYU-Hydroinformatics/pybfs/blob/main/notebooks/pybfs_forecast.ipynb" target="_"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+At the first part of the notebook, you will be prompted to upload a streamflow file and a parameters file. You can download the required files here:
+
+Streamflow: [2312200_data.csv](../files/2312200_data.csv)<br>
+Parameters: [bfs_params_50.csv](../files/bfs_params_50.csv)
+
+The notebook includes code for a basic baseflow separation analysis and a short-term baseflow forecast.
+
 ## Baseflow Separation Example
 
 This example demonstrates how to use PyBFS to separate baseflow from streamflow data for a specific site. This assumes you have already installed PyBFS and have the necessary data files and are running within a Python environment.
