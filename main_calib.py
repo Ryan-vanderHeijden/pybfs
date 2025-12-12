@@ -16,6 +16,25 @@ import pybfs
 def main():
     """Main execution function for calibration testing"""
 
+    # Check for NUMBA installation
+    try:
+        import numba
+        numba_installed = True
+    except ImportError:
+        numba_installed = False
+    
+    if not numba_installed:
+        print("\n" + "="*80)
+        print(" " * 20 + "⚠️  WARNING: NUMBA NOT INSTALLED ⚠️")
+        print("="*80)
+        print("\n" + " " * 10 + "NUMBA is not installed on this system.")
+        print(" " * 10 + "The calibration process will be VERY SLOW without NUMBA.")
+        print(" " * 10 + "Installation is strongly recommended for reasonable performance.")
+        print("\n" + " " * 10 + "To install NUMBA, run:")
+        print(" " * 10 + "    pip install numba")
+        print("\n" + " " * 10 + "Continuing with calibration (this may take a very long time)...")
+        print("="*80 + "\n")
+
     # Site information
     site_id = "12167000"
     site_area = 6.71e+08  # m² (from siteinfo file)
@@ -277,7 +296,7 @@ def main():
             
             # Create comparison plot
             print("Creating comparison plot...")
-            fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
+            fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
             
             # Determine column names (handle both formats)
             qob_col = 'Qob' if 'Qob' in py_bfs_out.columns else 'Qob.L3'
@@ -287,10 +306,18 @@ def main():
             
             dates = py_bfs_out['Date'].values
             
-            # Plot 1: Observed Streamflow
-            axes[0].plot(dates, py_bfs_out[qob_col].values, 'k-', linewidth=1.5, label='Observed', alpha=0.7)
-            axes[0].set_ylabel('Streamflow\n(m³/day)', fontsize=10)
-            axes[0].set_title('Observed Streamflow', fontsize=12, fontweight='bold')
+            # Calculate total simulated flow for statistics (not plotted)
+            py_qsim = py_bfs_out[baseflow_col].values + py_bfs_out[surface_col].values + py_bfs_out[direct_col].values
+            r_qsim = r_bfs_out[baseflow_col].values + r_bfs_out[surface_col].values + r_bfs_out[direct_col].values
+            
+            # Plot 1: Observed Streamflow with R and Python Baseflow
+            axes[0].plot(dates, py_bfs_out[qob_col].values, 'k-', linewidth=1.5, label='Observed Streamflow', alpha=0.7)
+            axes[0].plot(dates, py_bfs_out[baseflow_col].values, 'b-', linewidth=1.5, 
+                        label='Python Baseflow', alpha=0.7)
+            axes[0].plot(dates, r_bfs_out[baseflow_col].values, 'r--', linewidth=1.5, 
+                        label='R Baseflow', alpha=0.7)
+            axes[0].set_ylabel('Flow\n(m³/day)', fontsize=10)
+            axes[0].set_title('Observed Streamflow and Baseflow Comparison', fontsize=12, fontweight='bold')
             axes[0].grid(True, alpha=0.3)
             axes[0].legend()
             
@@ -310,21 +337,10 @@ def main():
             axes[2].plot(dates, r_bfs_out[surface_col].values, 'r--', linewidth=1.5, 
                         label='R Surface Flow', alpha=0.7)
             axes[2].set_ylabel('Surface Flow\n(m³/day)', fontsize=10)
+            axes[2].set_xlabel('Date', fontsize=10)
             axes[2].set_title('Surface Flow Comparison: Python vs R', fontsize=12, fontweight='bold')
             axes[2].grid(True, alpha=0.3)
             axes[2].legend()
-            
-            # Plot 4: Total Simulated Flow Comparison
-            py_qsim = py_bfs_out[baseflow_col].values + py_bfs_out[surface_col].values + py_bfs_out[direct_col].values
-            r_qsim = r_bfs_out[baseflow_col].values + r_bfs_out[surface_col].values + r_bfs_out[direct_col].values
-            axes[3].plot(dates, py_bfs_out[qob_col].values, 'k-', linewidth=1, label='Observed', alpha=0.5)
-            axes[3].plot(dates, py_qsim, 'b-', linewidth=1.5, label='Python Simulated', alpha=0.7)
-            axes[3].plot(dates, r_qsim, 'r--', linewidth=1.5, label='R Simulated', alpha=0.7)
-            axes[3].set_ylabel('Total Flow\n(m³/day)', fontsize=10)
-            axes[3].set_xlabel('Date', fontsize=10)
-            axes[3].set_title('Total Simulated Flow Comparison: Python vs R', fontsize=12, fontweight='bold')
-            axes[3].grid(True, alpha=0.3)
-            axes[3].legend()
             
             plt.tight_layout()
             plot_filename = f'bfs_comparison_{site_id}.png'
