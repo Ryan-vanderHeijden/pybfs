@@ -16,9 +16,15 @@ Baseflow represents the steady, sustained component of streamflow that is primar
 
 One of the most powerful features of PyBFS is its ability to forecast future baseflow without requiring precipitation data. This capability is particularly valuable during drought conditions or for planning purposes when you need to understand how streamflow will evolve in the absence of significant rainfall events. The forecasting workflow begins by running the baseflow separation algorithm on a historical calibration period to establish the current state of the watershed's surface and subsurface reservoirs. From the final time step of this calibration period, the model extracts a complete snapshot of the system state including water levels in both reservoirs, storage volumes, flow rates, and recharge conditions.
 
-Using these initial conditions, the forecast function projects the system forward in time by simulating how the reservoirs will drain and interact according to the established physical relationships. The model assumes zero precipitation during the forecast period, making it essentially a recession forecast that shows how baseflow will decline based purely on the drainage of existing storage. This approach is particularly useful for answering questions like "How long will this stream maintain a minimum flow threshold?" or "What will baseflow conditions be like in 30, 60, or 90 days if no significant rain occurs?" Water resource managers can use these forecasts to make informed decisions about water allocation, flow augmentation needs, or drought emergency declarations.
+Using these initial conditions, the forecast function projects the system forward in time by simulating how the reservoirs will drain and interact according to the established physical relationships. The model assumes zero precipitation during the forecast period, making it essentially a recession forecast that shows how baseflow will decline based purely on the drainage of existing storage. This approach is particularly useful for answering questions like "How long will this stream maintain a minimum flow threshold?" or "What will baseflow conditions be like in 30, 60, or 90 days if no significant rain occurs?" Water resource managers can use these forecasts to make informed decisions about water allocation, flow augmentation needs, or drought emergency declarations. The following figure illustrates the PyBFS forecasting results for a streamflow forecast period of 30 days.
 
 ![figure_3.png](images/figure_3.png)
+
+This is a closeup of the forecast region on the right side of the previous figure. The actual flow is shown in blue, 
+while the forecasted baseflow is shown in green. The actual flow was higher because of precipition that occurred 
+during the forecast period. The forecast represents the "worst case scenario" corresponding to the absence of precipitation.
+
+![figure_4.png](images/figure_4.png)
 
 ### The BFS Model Approach
 

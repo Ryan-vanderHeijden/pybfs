@@ -196,7 +196,7 @@ def plot_forecast(
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
     if save:
-        fig.savefig("baseflow_training_forecast.png", dpi=dpi, bbox_inches="tight")
+        fig.savefig("figure_3.png", dpi=dpi, bbox_inches="tight")
     plt.show()
 
 
