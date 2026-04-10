@@ -122,6 +122,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# Claude Code
+.claude/
+
 # IDEs
 .idea/
 .vscode/
