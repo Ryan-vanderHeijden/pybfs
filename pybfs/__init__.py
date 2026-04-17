@@ -52,6 +52,13 @@ from .calibrate import (
     cal_surface,
 )
 
+# Import from evolutionary algorithm calibration module
+from .calibrate_ea import (
+    bfs_calibrate_nsga2,
+    kge_loss,
+    recession_error,
+)
+
 __all__ = [
     "sur_z",
     "sur_store",
@@ -79,4 +86,7 @@ __all__ = [
     "plot_forecast",
     "plot_forecast_baseflow",
     "plot_forecast_baseflow_streamflow",
+    "bfs_calibrate_nsga2",
+    "kge_loss",
+    "recession_error",
 ]
