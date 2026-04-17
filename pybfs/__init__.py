@@ -34,6 +34,13 @@ from .plot import (
     plot_forecast_baseflow_streamflow,
 )
 
+# Import from skill module
+from .skill import (
+    modified_strict_baseflow,
+    separation_skill,
+    forecast_skill,
+)
+
 # Import from calibrate module
 from .calibrate import (
     bfs_calibrate,
@@ -65,6 +72,9 @@ __all__ = [
     "cal_basetable",
     "cal_base",
     "cal_surface",
+    "modified_strict_baseflow",
+    "separation_skill",
+    "forecast_skill",
     "plot_baseflow_simulation",
     "plot_forecast",
     "plot_forecast_baseflow",
