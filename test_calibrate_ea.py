@@ -70,6 +70,7 @@ def _plot_results(bfs_out, pareto_df, site):
 
     ax = axes[0]
     ax.plot(bfs_out['Date'], bfs_out['Qob'], label='Observed Q', color='steelblue', lw=0.8)
+    ax.plot(bfs_out['Date'], bfs_out['Qsim'], label='Simulated Q', color='seagreen', lw=0.8, linestyle='--')
     ax.plot(bfs_out['Date'], bfs_out['Baseflow'], label='Baseflow', color='darkorange', lw=1.0)
     ax.set_ylabel('Discharge (m³/day)')
     ax.set_title(f'Site {site} — Knee-point BFS result')

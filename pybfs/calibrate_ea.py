@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.core.problem import ElementwiseProblem
-from pymoo.parallelization.starmap import StarmapParallelization
+from pymoo.core.problem import StarmapParallelization
 from pymoo.decomposition.asf import ASF
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
