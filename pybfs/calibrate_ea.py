@@ -297,7 +297,9 @@ def bfs_calibrate_nsga2(
     if n_jobs is None:
         n_jobs = max(1, mp.cpu_count() - 1)
 
-    pool = mp.Pool(n_jobs) if n_jobs > 1 else None
+    # Use spawn context on all platforms to avoid fork+numba conflicts on Linux
+    ctx = mp.get_context('spawn')
+    pool = ctx.Pool(n_jobs) if n_jobs > 1 else None
     try:
         if pool is not None:
             runner = StarmapParallelization(pool.starmap)
