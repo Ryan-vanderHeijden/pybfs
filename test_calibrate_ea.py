@@ -31,8 +31,8 @@ def main():
         tmp_area=BASIN_AREA,
         tmp_q=tmp_q,
         dys=dys,
-        pop_size=100,
-        n_gen=100,
+        pop_size=200,
+        n_gen=400,
         seed=3,
     )
     elapsed = time.time() - t0
