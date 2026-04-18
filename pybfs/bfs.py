@@ -22,7 +22,21 @@ HAS_NUMBA = True
 
 if HAS_NUMBA:
     @jit(nopython=True, cache=True)
-    def _bfs_core_loop(qin, sbt_xb, sbt_z, sbt_s, sbt_q, rise, p, 
+    def _sbt_interp(key, key_arr, val_arr):
+        """Linear interpolation on a sorted SBT column."""
+        n = len(key_arr)
+        if key <= key_arr[0]:
+            return val_arr[0]
+        if key >= key_arr[n - 1]:
+            return val_arr[n - 1]
+        for i in range(n - 1):
+            if key_arr[i] <= key <= key_arr[i + 1]:
+                t = (key - key_arr[i]) / (key_arr[i + 1] - key_arr[i])
+                return val_arr[i] + t * (val_arr[i + 1] - val_arr[i])
+        return val_arr[n - 1]
+
+    @jit(nopython=True, cache=True)
+    def _bfs_core_loop(qin, sbt_xb, sbt_z, sbt_s, sbt_q, rise, p,
                        lb, alpha, ws, por, ks, kz, prec, ifact, qmean,
                        X, qcomp, ETA, I, Z, ST, EXC):
         """
@@ -87,15 +101,7 @@ if HAS_NUMBA:
                 zb_in = Z[ts - 1, 1]
                 sb_in = ST[ts - 1, 1]
                 
-                # Find index in SBT - match original: (SBT["Xb"] <= xb_in).sum() - 1
-                idx = 0
-                for i in range(len(sbt_xb)):
-                    if sbt_xb[i] <= xb_in:
-                        idx = i + 1  # Count (like .sum())
-                    else:
-                        break
-                idx = idx - 1 if idx > 0 else -1  # Convert count to index (idx - 1)
-                qb_in = sbt_q[idx] if idx >= 0 and idx < len(sbt_q) else np.nan
+                qb_in = _sbt_interp(xb_in, sbt_xb, sbt_q)
                 
                 zs_in = Z[ts - 1, 0]
                 ss_in = ST[ts - 1, 0]
@@ -151,20 +157,14 @@ if HAS_NUMBA:
                 infil_en = min(infil_val, ssa)
             
             rech_en = min(recharge_jit(lb, xb_in, ws, kz, zs_en, por), sba + qb_in)
+            sb_en_prov = max(sb_in + rech_en - qb_in, 0.0)
+            xb_en_prov = _sbt_interp(sb_en_prov, sbt_s, sbt_xb)
+            rech_en = min(recharge_jit(lb, (xb_in + xb_en_prov) / 2.0, ws, kz, zs_en, por), sba + qb_in)
             sb_en = max(sb_in + rech_en - qb_in, 0.0)
-            
-            # Find index in SBT - match original: max((SBT["S"] < sb_en).sum(), 1) - 1
-            idx = 0
-            for i in range(len(sbt_s)):
-                if sbt_s[i] < sb_en:
-                    idx = i + 1  # Count (like .sum())
-                else:
-                    break
-            idx = max(idx, 1) - 1  # max(count, 1) - 1
-            
-            xb_en = sbt_xb[idx] if 0 <= idx < len(sbt_xb) else np.nan
-            zb_en = sbt_z[idx] if 0 <= idx < len(sbt_z) else np.nan
-            qb_en = sbt_q[idx] if 0 <= idx < len(sbt_q) else np.nan
+
+            xb_en = _sbt_interp(sb_en, sbt_s, sbt_xb)
+            zb_en = _sbt_interp(sb_en, sbt_s, sbt_z)
+            qb_en = _sbt_interp(sb_en, sbt_s, sbt_q)
             
             # Final calculations
             qcomp[ts, 0] = (qs_in + qs_en) / 2
@@ -191,15 +191,7 @@ if HAS_NUMBA:
                         max_s = sbt_s[i]
                 ST[ts, 1] = min(ST[ts, 1], max_s)
                 
-                # Find index in SBT - match original: max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
-                idx = 0
-                for i in range(len(sbt_s)):
-                    if sbt_s[i] <= ST[ts, 1]:
-                        idx = i + 1  # Count (like .sum())
-                    else:
-                        break
-                idx = max(idx, 1) - 1  # max(count, 1) - 1
-                Z[ts, 1] = sbt_z[idx] if idx >= 0 and idx < len(sbt_z) else np.nan
+                Z[ts, 1] = _sbt_interp(ST[ts, 1], sbt_s, sbt_z)
                 
                 qcomp[ts, 2] = (dir_q_jit(lb, alpha, zs_in, I[ts]) + 
                                dir_q_jit(lb, alpha, (Z[ts, 0] - zs_in), I[ts] / 2) + 
@@ -207,15 +199,7 @@ if HAS_NUMBA:
             
             ETA[ts] = qin[ts] - (qcomp[ts, 0] + qcomp[ts, 1] + qcomp[ts, 2])
             
-            # Find index in SBT - match original: max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
-            idx = 0
-            for i in range(len(sbt_s)):
-                if sbt_s[i] <= ST[ts, 1]:
-                    idx = i + 1  # Count (like .sum())
-                else:
-                    break
-            idx = max(idx, 1) - 1  # max(count, 1) - 1
-            X[ts] = sbt_xb[idx] if idx >= 0 and idx < len(sbt_xb) else np.nan
+            X[ts] = _sbt_interp(ST[ts, 1], sbt_s, sbt_xb)
             
             ts += 1
             ts_ini = False
@@ -453,8 +437,7 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
                 zb_in = Z[ts - 1, 1]
                 sb_in = ST[ts - 1, 1]
 
-                idx = (SBT["Xb"] <= xb_in).sum()
-                qb_in = SBT["Q"].iloc[idx - 1] if idx > 0 else np.nan
+                qb_in = np.interp(xb_in, SBT["Xb"].values, SBT["Q"].values)
 
                 zs_in = Z[ts - 1, 0]
                 ss_in = ST[ts - 1, 0]
@@ -507,13 +490,13 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
             else:
                 infil_en = min(infil_val, ssa)
             rech_en = min(recharge(lb, xb_in, ws, kz, zs_en, por), sba + qb_in)
+            sb_en_prov = max(sb_in + rech_en - qb_in, 0)
+            xb_en_prov = np.interp(sb_en_prov, SBT["S"].values, SBT["Xb"].values)
+            rech_en = min(recharge(lb, (xb_in + xb_en_prov) / 2, ws, kz, zs_en, por), sba + qb_in)
             sb_en = max(sb_in + rech_en - qb_in, 0)
-            idx = max((SBT["S"] < sb_en).sum(), 1) - 1
-
-            # Safely extract the values from the DataFrame
-            xb_en = SBT["Xb"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
-            zb_en = SBT["Z"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
-            qb_en = SBT["Q"].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+            xb_en = np.interp(sb_en, SBT["S"].values, SBT["Xb"].values)
+            zb_en = np.interp(sb_en, SBT["S"].values, SBT["Z"].values)
+            qb_en = np.interp(sb_en, SBT["S"].values, SBT["Q"].values)
 
             # Final Calculations for Time Step
             qcomp[ts, 0] = (qs_in + qs_en) / 2  # Surface Flow
@@ -537,15 +520,13 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
                 ST[ts, 1] = max(ST[ts - 1, 1] + EXC[ts, 1] - qcomp[ts, 1], 0)
                 ST[ts, 1] = min(ST[ts, 1], max(SBT['S']))
 
-                idx = max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
-                Z[ts, 1] = SBT['Z'].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+                Z[ts, 1] = np.interp(ST[ts, 1], SBT['S'].values, SBT['Z'].values)
 
                 # Direct Runoff includes additional saturated area x half of rainfall (excess after infiltration), and any precipitation that exceeds infiltration rate
                 qcomp[ts, 2] = dir_q(lb, alpha, zs_in, I[ts]) + dir_q(lb, alpha, (Z[ts, 0] - zs_in), I[ts] / 2) + max(2 * lb * (ws - zs_in / alpha) * (I[ts] - ks), 0)
 
             ETA[ts] = qin[ts] - np.sum(qcomp[ts, 0:3])  # Streamflow Residual
-            idx = max((SBT['S'] <= ST[ts, 1]).sum(), 1) - 1
-            X[ts] = SBT['Xb'].iloc[idx] if 0 <= idx < len(SBT) else np.nan
+            X[ts] = np.interp(ST[ts, 1], SBT['S'].values, SBT['Xb'].values)
 
             ts += 1
             ts_ini = False

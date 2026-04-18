@@ -1,0 +1,39 @@
+flowchart TD
+    A([test_calibrate_ea.py\nmain]) --> B[Load streamflow CSV\ndate + discharge_m3d]
+    B --> C[bfs_calibrate_nsga2\ntmp_site, tmp_area, tmp_q, dys]
+
+    subgraph SETUP["Setup (bfs_calibrate_nsga2)"]
+        C --> D[flow_metrics\nQthresh, Rs, Rb1, Rb2,\nPrec, Frac4Rise, rb10]
+        D --> E[Build streamflow_df\npd.DataFrame Date/Streamflow]
+        E --> F[Spawn mp.Pool\nn_jobs workers]
+    end
+
+    subgraph PROBLEM["BFSProblem (ElementwiseProblem)"]
+        F --> G[Build BFSProblem\nn_var=8, n_obj=2, n_ieq_constr=1]
+        G --> G1["Bounds in log₁₀-space\nLb, Wb, X1, ALPHA, Ks, Kb, Kz\n+ linear BETA"]
+    end
+
+    subgraph NSGA2_LOOP["NSGA-II (pymoo) — pop_size generations"]
+        G1 --> H[FloatRandomSampling\ninitial population]
+        H --> I{_evaluate x\nfor each individual}
+        I --> I1[Constraint G:\nLb×Wb ≤ basin_area]
+        I --> I2[_run_bfs\n_decode_x → base_table → bfs]
+        I2 --> I3[F0: kge_loss\nQsim vs Qob]
+        I2 --> I4[F1: recession_error\nlog-rate MAE vs rb10]
+        I3 & I4 --> J[Non-dominated sort\nPareto ranking]
+        J --> K[SBX crossover\n+ PM mutation]
+        K --> I
+    end
+
+    subgraph POST["Post-processing"]
+        K -->|n_gen reached| L[Filter feasible\nF < 900]
+        L --> M[Build pareto_df\nall Pareto-front solutions]
+        L --> N[Normalize F\nASF knee-point selection]
+        N --> O[_run_bfs on knee-x\nfinal evaluation]
+        O --> P[calculate_error\n+ BFF baseflow fraction]
+        P --> Q[Build knee_params df]
+    end
+
+    M & Q & O --> R([Return\npareto_df, knee_df, bfs_out])
+    R --> S[Save CSVs\n_pareto.csv + _knee.csv]
+    R --> T[_plot_results\nhydrograph + Pareto scatter]

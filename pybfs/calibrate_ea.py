@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.core.problem import ElementwiseProblem
-from pymoo.core.problem import StarmapParallelization
+from pymoo.parallelization.starmap import StarmapParallelization
 from pymoo.decomposition.asf import ASF
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
@@ -25,6 +25,7 @@ from .calibrate import calculate_error
 from .utilities import base_table, flow_metrics
 
 _POR = 0.15  # Fixed drainable porosity
+N_WORKERS = 8
 
 
 def kge_loss(qobs, qsim):
@@ -88,6 +89,8 @@ def recession_error(bfs_out_df, rb1, rb2, qthresh):
             and baseflow[t] > 0
             and baseflow[t - 1] > 0
             and not np.isnan(qob[t])
+            and baseflow[t] <= qob[t]
+            and baseflow[t - 1] <= qob[t - 1]
         ):
             modeled_rate = np.log10(baseflow[t] / baseflow[t - 1])
             expected_rate = rb1 + rb2 * np.log10(qob[t])
@@ -114,6 +117,19 @@ def _decode_x(x):
         10 ** x[6],  # Kb
         10 ** x[7],  # Kz
     )
+
+
+def _compute_bff(bfs_out_df):
+    """Baseflow fraction: sum(min(Baseflow, Qob)) / sum(Qob)."""
+    tmp_bf = bfs_out_df['Baseflow'].copy()
+    over = bfs_out_df['Baseflow'] > bfs_out_df['Qob']
+    over.fillna(False, inplace=True)
+    tmp_bf[over] = bfs_out_df['Qob'][over]
+    valid = ~np.isnan(bfs_out_df['Qob'])
+    denom = np.nansum(bfs_out_df['Qob'][valid])
+    if denom == 0:
+        return 0.0
+    return float(np.nansum(tmp_bf[valid]) / denom)
 
 
 def _run_bfs(x, streamflow_df, flow, basin_area):
@@ -146,6 +162,7 @@ class BFSProblem(ElementwiseProblem):
     F[0] : KGE loss (1 - KGE) on total simulated vs observed streamflow.
     F[1] : Recession MAE between modeled baseflow log-recession rates and the
            empirical recession regression derived from flow_metrics.
+    F[2] : 1 - BFF (baseflow fraction); minimizing drives higher baseflow yield.
 
     Constraint
     ----------
@@ -182,21 +199,25 @@ class BFSProblem(ElementwiseProblem):
             5.0,               # log10(Kz)
         ])
 
-        super().__init__(n_var=8, n_obj=2, n_ieq_constr=1, xl=xl, xu=xu, **kwargs)
+        super().__init__(n_var=8, n_obj=3, n_ieq_constr=3, xl=xl, xu=xu, **kwargs)
 
     def _evaluate(self, x, out, *args, **kwargs):
         lb, wb = 10 ** x[0], 10 ** x[1]
-        out['G'] = [lb * wb - self.basin_area]
 
         result = _run_bfs(x, self.streamflow_df, self.flow, self.basin_area)
         if result is None:
-            out['F'] = [999.0, 999.0]
+            out['F'] = [999.0, 999.0, 999.0]
+            out['G'] = [lb * wb - self.basin_area, 999.0, 999.0]
             return
 
         bfs_out, _, _ = result
         f1 = kge_loss(bfs_out['Qob'].values, bfs_out['Qsim'].values)
         f2 = recession_error(bfs_out, self.rb1, self.rb2, self.flow[0])
-        out['F'] = [f1, f2]
+        f3 = 1.0 - _compute_bff(bfs_out)
+        valid = ~np.isnan(bfs_out['Qob']) & ~np.isnan(bfs_out['Baseflow'])
+        bf_exceed_frac = float(np.mean(bfs_out.loc[valid, 'Baseflow'] > bfs_out.loc[valid, 'Qob']))
+        out['F'] = [f1, f2, f3]
+        out['G'] = [lb * wb - self.basin_area, f1 - 1.41, bf_exceed_frac - 0.05]
 
 
 def _build_pareto_df(res_X, res_F, tmp_site, tmp_area, flow_vals):
@@ -216,6 +237,7 @@ def _build_pareto_df(res_X, res_F, tmp_site, tmp_area, flow_vals):
             'Prec': Prec, 'Frac4Rise': Frac4Rise,
             'KGE': 1.0 - f[0],
             'RecessionError': f[1],
+            'BFF': 1.0 - f[2],
         })
     return pd.DataFrame(rows)
 
@@ -228,7 +250,7 @@ def bfs_calibrate_nsga2(
     pop_size=200,
     n_gen=300,
     seed=None,
-    n_jobs=None,
+    n_jobs=N_WORKERS,
 ):
     """Calibrate baseflow separation parameters using NSGA-II.
 
@@ -260,7 +282,7 @@ def bfs_calibrate_nsga2(
         (pareto_front_df, knee_params_df, bfs_out_df) where:
 
         - pareto_front_df: DataFrame with all Pareto-optimal solutions and
-          their objectives (KGE, RecessionError).
+          their objectives (KGE, RecessionError, BFF).
         - knee_params_df: DataFrame with the knee-point parameters (balanced
           trade-off between the two objectives, selected via ASF).
         - bfs_out_df: Full BFS output for the knee-point parameter set.
@@ -348,7 +370,7 @@ def bfs_calibrate_nsga2(
     # Knee point: Achievement Scalarization Function on normalized objectives
     F_range = F_front.max(axis=0) - F_front.min(axis=0)
     F_norm = (F_front - F_front.min(axis=0)) / (F_range + 1e-10)
-    knee_idx = ASF().do(F_norm, np.ones(2)).argmin()
+    knee_idx = ASF().do(F_norm, np.ones(3)).argmin()
     knee_x = X_front[knee_idx]
 
     result = _run_bfs(knee_x, streamflow_df, flow, tmp_area)
@@ -358,13 +380,7 @@ def bfs_calibrate_nsga2(
 
     bfs_out, _, _ = result
     error = calculate_error(bfs_out)
-
-    tmp_bf = bfs_out['Baseflow'].copy()
-    over = bfs_out['Baseflow'] > bfs_out['Qob']
-    over.fillna(False, inplace=True)
-    tmp_bf[over] = bfs_out['Qob'][over]
-    valid = ~np.isnan(bfs_out['Qob'])
-    bff = np.nansum(tmp_bf[valid]) / np.nansum(bfs_out['Qob'][valid])
+    bff = _compute_bff(bfs_out)
 
     lb, wb, x1, alpha, beta, ks, kb, kz = _decode_x(knee_x)
     knee_params = pd.DataFrame({
@@ -377,8 +393,8 @@ def bfs_calibrate_nsga2(
         'Prec': [Prec], 'Frac4Rise': [Frac4Rise],
         'KGE': [1.0 - F_front[knee_idx, 0]],
         'RecessionError': [F_front[knee_idx, 1]],
+        'BFF': [1.0 - F_front[knee_idx, 2]],
         'Error': [error],
-        'BFF': [bff],
     })
 
     return pareto_df, knee_params, bfs_out
