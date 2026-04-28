@@ -55,7 +55,7 @@ from .calibrate import (
 # Import from evolutionary algorithm calibration module
 from .calibrate_ea import (
     bfs_calibrate_nsga2,
-    kge_loss,
+    recession_log_rmse,
     recession_error,
 )
 
@@ -87,6 +87,6 @@ __all__ = [
     "plot_forecast_baseflow",
     "plot_forecast_baseflow_streamflow",
     "bfs_calibrate_nsga2",
-    "kge_loss",
+    "recession_log_rmse",
     "recession_error",
 ]

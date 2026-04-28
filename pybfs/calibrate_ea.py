@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """Evolutionary algorithm calibration for PyBFS using NSGA-II.
 
-Replaces the sequential Nelder-Mead approach in calibrate.py with a
-multi-objective NSGA-II optimization that simultaneously minimizes KGE loss
-(total flow performance) and recession error (recession dynamics matching).
+Two-objective NSGA-II calibration:
+  F[0]: Log-space RMSE of Qsim vs Qob on recession days (RecessCount.T > 0,
+        Qob > 0). Directly measures the stated model intent: total simulated
+        flow should match observed flow during recession and low-flow periods.
+  F[1]: MAE between modeled baseflow log-recession rates and the empirical
+        quantile regression from flow_metrics. Penalises wrong decay shape
+        independently of level.
 """
 
 import multiprocessing as mp
@@ -28,29 +32,34 @@ _POR = 0.15  # Fixed drainable porosity
 N_WORKERS = 8
 
 
-def kge_loss(qobs, qsim):
-    """KGE loss (1 - KGE); lower is better.
+def recession_log_rmse(bfs_out_df):
+    """Log-space RMSE of Qsim vs Qob on recession days.
+
+    Only days where RecessCount.T > 0 and Qob > 0 are included, which
+    corresponds to all non-rising timesteps with positive observed flow.
+    Log-space is used so that errors at low flows count equally to errors
+    at moderate flows across the orders-of-magnitude range of recession.
 
     Parameters
     ----------
-    qobs, qsim : array-like
-        Observed and simulated streamflow.
+    bfs_out_df : pd.DataFrame
+        Output from bfs().
 
     Returns
     -------
     float
-        sqrt((r-1)^2 + (alpha-1)^2 + (beta-1)^2), or 999.0 on failure.
+        RMSE of log10(Qsim) - log10(Qob) on recession days, or 999.0
+        when fewer than 10 valid days are found.
     """
-    mask = ~(np.isnan(qobs) | np.isnan(qsim)) & (qobs >= 0) & (qsim >= 0)
+    qob = bfs_out_df['Qob'].values
+    qsim = bfs_out_df['Qsim'].values
+    recess = bfs_out_df['RecessCount.T'].values
+
+    mask = (recess > 0) & (qob > 0) & (qsim > 0) & ~np.isnan(qob) & ~np.isnan(qsim)
     if mask.sum() < 10:
         return 999.0
-    qo, qs = qobs[mask], qsim[mask]
-    r = np.corrcoef(qo, qs)[0, 1]
-    if np.isnan(r):
-        return 999.0
-    alpha = np.std(qs) / (np.std(qo) + 1e-10)
-    beta = np.mean(qs) / (np.mean(qo) + 1e-10)
-    return float(np.sqrt((r - 1) ** 2 + (alpha - 1) ** 2 + (beta - 1) ** 2))
+    log_errors = np.log10(qsim[mask]) - np.log10(qob[mask])
+    return float(np.sqrt(np.mean(log_errors ** 2)))
 
 
 def recession_error(bfs_out_df, rb1, rb2, qthresh):
@@ -159,14 +168,17 @@ class BFSProblem(ElementwiseProblem):
 
     Objectives
     ----------
-    F[0] : KGE loss (1 - KGE) on total simulated vs observed streamflow.
+    F[0] : Log-space RMSE of Qsim vs Qob on recession days (RecessCount.T > 0,
+           Qob > 0). Measures how well total simulated flow matches observed
+           flow during the periods the model is designed to capture.
     F[1] : Recession MAE between modeled baseflow log-recession rates and the
-           empirical recession regression derived from flow_metrics.
-    F[2] : 1 - BFF (baseflow fraction); minimizing drives higher baseflow yield.
+           empirical recession regression derived from flow_metrics. Measures
+           the shape of the decay independently of level.
 
-    Constraint
-    ----------
+    Constraints
+    -----------
     G[0] : Lb * Wb <= basin_area  (physical feasibility)
+    G[1] : baseflow > Qob on <= 5% of valid days  (baseflow physically bounded)
     """
 
     def __init__(self, streamflow_df, flow, basin_area, rb1, rb2, **kwargs):
@@ -199,25 +211,24 @@ class BFSProblem(ElementwiseProblem):
             5.0,               # log10(Kz)
         ])
 
-        super().__init__(n_var=8, n_obj=3, n_ieq_constr=3, xl=xl, xu=xu, **kwargs)
+        super().__init__(n_var=8, n_obj=2, n_ieq_constr=2, xl=xl, xu=xu, **kwargs)
 
     def _evaluate(self, x, out, *args, **kwargs):
         lb, wb = 10 ** x[0], 10 ** x[1]
 
         result = _run_bfs(x, self.streamflow_df, self.flow, self.basin_area)
         if result is None:
-            out['F'] = [999.0, 999.0, 999.0]
-            out['G'] = [lb * wb - self.basin_area, 999.0, 999.0]
+            out['F'] = [999.0, 999.0]
+            out['G'] = [lb * wb - self.basin_area, 999.0]
             return
 
         bfs_out, _, _ = result
-        f1 = kge_loss(bfs_out['Qob'].values, bfs_out['Qsim'].values)
-        f2 = recession_error(bfs_out, self.rb1, self.rb2, self.flow[0])
-        f3 = 1.0 - _compute_bff(bfs_out)
+        f0 = recession_log_rmse(bfs_out)
+        f1 = recession_error(bfs_out, self.rb1, self.rb2, self.flow[0])
         valid = ~np.isnan(bfs_out['Qob']) & ~np.isnan(bfs_out['Baseflow'])
         bf_exceed_frac = float(np.mean(bfs_out.loc[valid, 'Baseflow'] > bfs_out.loc[valid, 'Qob']))
-        out['F'] = [f1, f2, f3]
-        out['G'] = [lb * wb - self.basin_area, f1 - 1.41, bf_exceed_frac - 0.05]
+        out['F'] = [f0, f1]
+        out['G'] = [lb * wb - self.basin_area, bf_exceed_frac - 0.05]
 
 
 def _build_pareto_df(res_X, res_F, tmp_site, tmp_area, flow_vals):
@@ -235,9 +246,8 @@ def _build_pareto_df(res_X, res_F, tmp_site, tmp_area, flow_vals):
             'POR': _POR,
             'Qthresh': Qthresh, 'Rs': Rs, 'Rb1': Rb1, 'Rb2': Rb2,
             'Prec': Prec, 'Frac4Rise': Frac4Rise,
-            'KGE': 1.0 - f[0],
+            'RecessionRMSE': f[0],
             'RecessionError': f[1],
-            'BFF': 1.0 - f[2],
         })
     return pd.DataFrame(rows)
 
@@ -282,7 +292,7 @@ def bfs_calibrate_nsga2(
         (pareto_front_df, knee_params_df, bfs_out_df) where:
 
         - pareto_front_df: DataFrame with all Pareto-optimal solutions and
-          their objectives (KGE, RecessionError, BFF).
+          their objectives (RecessionRMSE, RecessionError).
         - knee_params_df: DataFrame with the knee-point parameters (balanced
           trade-off between the two objectives, selected via ASF).
         - bfs_out_df: Full BFS output for the knee-point parameter set.
@@ -370,7 +380,7 @@ def bfs_calibrate_nsga2(
     # Knee point: Achievement Scalarization Function on normalized objectives
     F_range = F_front.max(axis=0) - F_front.min(axis=0)
     F_norm = (F_front - F_front.min(axis=0)) / (F_range + 1e-10)
-    knee_idx = ASF().do(F_norm, np.ones(3)).argmin()
+    knee_idx = ASF().do(F_norm, np.ones(2)).argmin()
     knee_x = X_front[knee_idx]
 
     result = _run_bfs(knee_x, streamflow_df, flow, tmp_area)
@@ -391,9 +401,9 @@ def bfs_calibrate_nsga2(
         'Ks': [ks], 'Kb': [kb], 'Kz': [kz],
         'Qthresh': [Qthresh], 'Rs': [Rs], 'Rb1': [Rb1], 'Rb2': [Rb2],
         'Prec': [Prec], 'Frac4Rise': [Frac4Rise],
-        'KGE': [1.0 - F_front[knee_idx, 0]],
+        'RecessionRMSE': [F_front[knee_idx, 0]],
         'RecessionError': [F_front[knee_idx, 1]],
-        'BFF': [1.0 - F_front[knee_idx, 2]],
+        'BFF': [bff],
         'Error': [error],
     })
 

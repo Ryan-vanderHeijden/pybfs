@@ -8,7 +8,6 @@ import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.colors as colors
 
 from pybfs.calibrate_ea import bfs_calibrate_nsga2, _run_bfs, _POR
 from pybfs.utilities import flow_metrics
@@ -50,12 +49,12 @@ def main():
         return
 
     print(f"\n--- Pareto front ({len(pareto_df)} solutions) ---")
-    print(pareto_df[['KGE', 'RecessionError']].describe().to_string())
+    print(pareto_df[['RecessionRMSE', 'RecessionError']].describe().to_string())
 
     print("\n--- Knee-point solution ---")
     if knee_df is not None:
         cols = ['Lb', 'Wb', 'X1', 'ALPHA', 'BETA', 'Ks', 'Kb', 'Kz',
-                'KGE', 'RecessionError', 'Error', 'BFF']
+                'RecessionRMSE', 'RecessionError', 'Error', 'BFF']
         print(knee_df[cols].to_string(index=False))
     else:
         print("  (no knee solution returned)")
@@ -85,22 +84,18 @@ def _plot_results(bfs_out, pareto_df, site, knee_df=None):
     ax.set_yscale('log')
 
     ax = axes[1]
-    norm = colors.Normalize(vmin=0, vmax=1)
-    sc = ax.scatter(pareto_df['KGE'], pareto_df['RecessionError'],
-                    c=pareto_df['BFF'], cmap='viridis', s=20, alpha=0.8,
-                    norm=norm)
-
-    plt.colorbar(sc, ax=ax, norm=norm, cmap='plasma', label='BFF')
+    sc = ax.scatter(pareto_df['RecessionRMSE'], pareto_df['RecessionError'],
+                    s=20, alpha=0.8, color='steelblue')
     if knee_df is not None:
-        ax.scatter(knee_df['KGE'], knee_df['RecessionError'],
+        ax.scatter(knee_df['RecessionRMSE'], knee_df['RecessionError'],
                    marker='*', s=200, color='red', zorder=5, label='Knee point')
         ax.legend(loc='upper right')
-    ax.set_xlabel('KGE')
-    ax.set_ylabel('Recession Error (MAE)')
-    ax.set_title('Pareto front (color = BFF)')
+    ax.set_xlabel('Recession Log-RMSE (F[0])')
+    ax.set_ylabel('Recession Rate MAE (F[1])')
+    ax.set_title('Pareto front')
 
-    kge_margin = (pareto_df['KGE'].max() - pareto_df['KGE'].min()) * 0.1
-    ax.set_xlim(pareto_df['KGE'].min() - kge_margin, pareto_df['KGE'].max() + kge_margin)
+    x_margin = (pareto_df['RecessionRMSE'].max() - pareto_df['RecessionRMSE'].min()) * 0.1
+    ax.set_xlim(pareto_df['RecessionRMSE'].min() - x_margin, pareto_df['RecessionRMSE'].max() + x_margin)
     re_margin = (pareto_df['RecessionError'].max() - pareto_df['RecessionError'].min()) * 0.1
     ax.set_ylim(pareto_df['RecessionError'].min() - re_margin, pareto_df['RecessionError'].max() + re_margin)
 
