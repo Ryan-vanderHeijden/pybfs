@@ -9,14 +9,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from pybfs.calibrate_ea import bfs_calibrate_nsga2, _run_bfs, _POR
+from pybfs.calibrate_ea import bfs_calibrate_nsga2, _run_bfs
 from pybfs.utilities import flow_metrics
 
 SITE = '01134500'
 DATA_PATH = f'RV_data/calibration/{SITE}_cal.csv'
 
 # Basin area for 01134500 (m²) — Upper Ammonoosuc River, NH
-# Drainage area ~404 km²
 BASIN_AREA = 195e6  # m²
 POP_SIZE = 200
 GENERATIONS = 400
@@ -125,6 +124,7 @@ def plot_only():
         math.log10(row['Lb']), math.log10(row['Wb']), math.log10(row['X1']),
         math.log10(row['ALPHA']), row['BETA'],
         math.log10(row['Ks']), math.log10(row['Kb']), math.log10(row['Kz']),
+        math.log10(row['POR']),
     ])
     result = _run_bfs(x, streamflow_df, flow, BASIN_AREA)
     if result is None:

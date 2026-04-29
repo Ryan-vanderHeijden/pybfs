@@ -59,6 +59,9 @@ from .calibrate_ea import (
     recession_error,
 )
 
+# Import from single-objective DE calibration module
+from .calibrate_de import bfs_calibrate_de, bfs_objective
+
 __all__ = [
     "sur_z",
     "sur_store",
@@ -89,4 +92,6 @@ __all__ = [
     "bfs_calibrate_nsga2",
     "recession_log_rmse",
     "recession_error",
+    "bfs_calibrate_de",
+    "bfs_objective",
 ]

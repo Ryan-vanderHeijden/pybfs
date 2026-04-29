@@ -28,8 +28,8 @@ from .bfs import bfs
 from .calibrate import calculate_error
 from .utilities import base_table, flow_metrics
 
-_POR = 0.15  # Fixed drainable porosity
-N_WORKERS = 8
+_POR = 0.15  # Default porosity — used by DE calibration; NSGA-II calibrates POR as a free parameter
+N_WORKERS = 10
 
 
 def recession_log_rmse(bfs_out_df):
@@ -55,10 +55,17 @@ def recession_log_rmse(bfs_out_df):
     qsim = bfs_out_df['Qsim'].values
     recess = bfs_out_df['RecessCount.T'].values
 
-    mask = (recess > 0) & (qob > 0) & (qsim > 0) & ~np.isnan(qob) & ~np.isnan(qsim)
+    # Exclude days where Qob is zero or NaN, or Qsim is NaN (model failure).
+    # Do NOT exclude days where Qsim <= 0 — near-zero Qsim is a degenerate
+    # solution and must contribute a large error, not be silently dropped.
+    mask = (recess > 0) & (qob > 0) & ~np.isnan(qob) & ~np.isnan(qsim)
     if mask.sum() < 10:
         return 999.0
-    log_errors = np.log10(qsim[mask]) - np.log10(qob[mask])
+    # Floor Qsim at 1e-6 * Qob so log10 is always defined. A zero or negative
+    # Qsim on a recession day gets a log-error of roughly -6, keeping the
+    # landscape smooth and allowing the optimizer to find the gradient.
+    qsim_safe = np.maximum(qsim[mask], 1e-6 * qob[mask])
+    log_errors = np.log10(qsim_safe) - np.log10(qob[mask])
     return float(np.sqrt(np.mean(log_errors ** 2)))
 
 
@@ -111,11 +118,15 @@ def recession_error(bfs_out_df, rb1, rb2, qthresh):
 
 
 def _decode_x(x):
-    """Decode 8-element optimization vector to physical parameters.
+    """Decode optimization vector to physical parameters.
 
     Encoding: [log10(Lb), log10(Wb), log10(X1), log10(ALPHA), BETA,
-               log10(Ks), log10(Kb), log10(Kz)]
+               log10(Ks), log10(Kb), log10(Kz), log10(POR)]
+
+    POR (index 8) is optional; defaults to _POR when absent so that
+    8-element vectors from DE calibration remain compatible.
     """
+    por = 10 ** x[8] if len(x) > 8 else _POR
     return (
         10 ** x[0],  # Lb
         10 ** x[1],  # Wb
@@ -125,6 +136,7 @@ def _decode_x(x):
         10 ** x[5],  # Ks
         10 ** x[6],  # Kb
         10 ** x[7],  # Kz
+        por,         # POR
     )
 
 
@@ -149,11 +161,11 @@ def _run_bfs(x, streamflow_df, flow, basin_area):
     tuple or None
         (bfs_out_df, basin_char, gw_hyd) on success, None on any failure.
     """
-    lb, wb, x1, alpha, beta, ks, kb, kz = _decode_x(x)
-    basin_char = [basin_area, lb, x1, wb, _POR]
+    lb, wb, x1, alpha, beta, ks, kb, kz, por = _decode_x(x)
+    basin_char = [basin_area, lb, x1, wb, por]
     gw_hyd = [alpha, beta, ks, kb, kz]
     try:
-        sbt = base_table(lb, x1, wb, beta, kb, streamflow_df, _POR)
+        sbt = base_table(lb, x1, wb, beta, kb, streamflow_df, por)
         bfs_out = bfs(
             streamflow_df, sbt, basin_char, gw_hyd, flow,
             timestep='day', error_basis='base',
@@ -199,19 +211,21 @@ class BFSProblem(ElementwiseProblem):
             -8.0,              # log10(Ks)
             -8.0,              # log10(Kb)
             -8.0,              # log10(Kz)
+            -2.0,              # log10(POR) — min 0.01
         ])
         xu = np.array([
-            log_area / 2 + 2,  # log10(Lb)
+            log_area / 2 + 1,  # log10(Lb) — max 10*sqrt(area); prevents degenerate elongated geometry
             log_area / 2,      # log10(Wb) — max sqrt(area)
             log_area / 2 + 2,  # log10(X1)
             -1.0,              # log10(ALPHA) — max 10% gradient
             20.0,              # BETA
             5.0,               # log10(Ks)
-            5.0,               # log10(Kb)
-            5.0,               # log10(Kz)
+            3.0,               # log10(Kb) — max 1000; prevents POR/Kb compensation that keeps k too high
+            3.0,               # log10(Kz) — max 1000; was 5.0, large Kz caused artificially fast drainage
+            -0.3,              # log10(POR) — max ~0.5
         ])
 
-        super().__init__(n_var=8, n_obj=2, n_ieq_constr=2, xl=xl, xu=xu, **kwargs)
+        super().__init__(n_var=9, n_obj=2, n_ieq_constr=2, xl=xl, xu=xu, **kwargs)
 
     def _evaluate(self, x, out, *args, **kwargs):
         lb, wb = 10 ** x[0], 10 ** x[1]
@@ -236,14 +250,14 @@ def _build_pareto_df(res_X, res_F, tmp_site, tmp_area, flow_vals):
     Qthresh, Rs, Rb1, Rb2, Prec, Frac4Rise = flow_vals[:6]
     rows = []
     for x, f in zip(res_X, res_F):
-        lb, wb, x1, alpha, beta, ks, kb, kz = _decode_x(x)
+        lb, wb, x1, alpha, beta, ks, kb, kz, por = _decode_x(x)
         rows.append({
             'tmp.site': tmp_site,
             'tmp.area': tmp_area,
             'Lb': lb, 'Wb': wb, 'X1': x1,
             'ALPHA': alpha, 'BETA': beta,
             'Ks': ks, 'Kb': kb, 'Kz': kz,
-            'POR': _POR,
+            'POR': por,
             'Qthresh': Qthresh, 'Rs': Rs, 'Rb1': Rb1, 'Rb2': Rb2,
             'Prec': Prec, 'Frac4Rise': Frac4Rise,
             'RecessionRMSE': f[0],
@@ -264,8 +278,9 @@ def bfs_calibrate_nsga2(
 ):
     """Calibrate baseflow separation parameters using NSGA-II.
 
-    Performs multi-objective optimization over all 8 physical parameters
-    simultaneously, returning the full Pareto front and the knee-point solution.
+    Performs multi-objective optimization over all 9 physical parameters
+    (including POR as a free variable) simultaneously, returning the full
+    Pareto front and the knee-point solution.
 
     Parameters
     ----------
@@ -392,11 +407,11 @@ def bfs_calibrate_nsga2(
     error = calculate_error(bfs_out)
     bff = _compute_bff(bfs_out)
 
-    lb, wb, x1, alpha, beta, ks, kb, kz = _decode_x(knee_x)
+    lb, wb, x1, alpha, beta, ks, kb, kz, por = _decode_x(knee_x)
     knee_params = pd.DataFrame({
         'tmp.site': [tmp_site],
         'tmp.area': [tmp_area],
-        'Lb': [lb], 'X1': [x1], 'Wb': [wb], 'POR': [_POR],
+        'Lb': [lb], 'X1': [x1], 'Wb': [wb], 'POR': [por],
         'ALPHA': [alpha], 'BETA': [beta],
         'Ks': [ks], 'Kb': [kb], 'Kz': [kz],
         'Qthresh': [Qthresh], 'Rs': [Rs], 'Rb1': [Rb1], 'Rb2': [Rb2],

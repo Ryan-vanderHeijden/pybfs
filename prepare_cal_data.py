@@ -17,7 +17,7 @@ import glob
 import numpy as np
 import pandas as pd
 
-WINDOW_DAYS = 365 * 10  # 3650-day calibration window
+WINDOW_DAYS = 365 * 3  # 3650-day calibration window
 INPUT_DIR = "RV_data"
 OUTPUT_DIR = os.path.join(INPUT_DIR, "calibration")
 BASIN_CHAR_FILE = os.path.join(INPUT_DIR, "selected_catchments.csv")
