@@ -56,7 +56,7 @@ from .calibrate import (
 from .calibrate_ea import (
     bfs_calibrate_nsga2,
     recession_log_rmse,
-    recession_error,
+    sdr_error,
 )
 
 # Import from single-objective DE calibration module
@@ -91,7 +91,7 @@ __all__ = [
     "plot_forecast_baseflow_streamflow",
     "bfs_calibrate_nsga2",
     "recession_log_rmse",
-    "recession_error",
+    "sdr_error",
     "bfs_calibrate_de",
     "bfs_objective",
 ]

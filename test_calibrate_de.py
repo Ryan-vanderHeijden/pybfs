@@ -13,12 +13,18 @@ from pybfs.calibrate_de import bfs_calibrate_de
 from pybfs.calibrate_ea import _run_bfs, _POR
 from pybfs.utilities import flow_metrics
 
-SITE = '01134500'
+SITE = '04123500'
 DATA_PATH = f'RV_data/calibration/{SITE}_cal.csv'
 
-# Basin area for 01134500 (m²) — Upper Ammonoosuc River, NH
-BASIN_AREA = 195e6  # m²
-POP_SIZE = 100
+# # Basin area for 01134500 (m²) — Upper Ammonoosuc River, NH
+# BASIN_AREA = 195e6  # m²
+# POP_SIZE = 100
+# GENERATIONS = 400
+
+# Basin area for 04123500 (m²) — Manistee River Near Grayling, MI
+# 123 sq miles × 2.58999 km²/sq mile = 318.57 km²
+BASIN_AREA = 318.57e6  # m²
+POP_SIZE = 200
 GENERATIONS = 400
 
 

@@ -16,6 +16,10 @@ DATA_PATH = f'RV_data/calibration/{SITE}_cal.csv'
 # Basin area for 01134500 (m²) — Upper Ammonoosuc River, NH
 BASIN_AREA = 195e6  # m²
 
+# # Basin area for 04123500 (m²) — Manistee River Near Grayling, MI
+# # 123 sq miles × 2.58999 km²/sq mile = 318.57 km²
+# BASIN_AREA = 318.57e6  # m²
+
 
 def main():
     print(f"Loading streamflow data from {DATA_PATH} ...")

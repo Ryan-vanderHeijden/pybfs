@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test script for bfs_calibrate_nsga2 on site 01134500."""
+"""Test script for bfs_calibrate_nsga2 on site 04123500 (Manistee River Near Grayling, MI)."""
 
 import argparse
 import math
@@ -12,19 +12,14 @@ import matplotlib.pyplot as plt
 from pybfs.calibrate_ea import bfs_calibrate_nsga2, _run_bfs
 from pybfs.utilities import flow_metrics
 
-SITE = '01134500'
+SITE = '04123500'
 DATA_PATH = f'RV_data/calibration/{SITE}_cal.csv'
-
-# Basin area for 01134500 (m²) — Upper Ammonoosuc River, NH
-BASIN_AREA = 195e6  # m²
-POP_SIZE = 200
-GENERATIONS = 400
 
 # Basin area for 04123500 (m²) — Manistee River Near Grayling, MI
 # 123 sq miles × 2.58999 km²/sq mile = 318.57 km²
-# BASIN_AREA = 318.57e6  # m²
-# POP_SIZE = 200
-# GENERATIONS = 400
+BASIN_AREA = 318.57e6  # m²
+POP_SIZE = 200
+GENERATIONS = 400
 
 
 def main():
@@ -36,7 +31,7 @@ def main():
     dys = df['date'].values
 
     print(f"\nRunning NSGA-II calibration for site {SITE} ...")
-    print(f"  Basin area: {BASIN_AREA / 1e6:.0f} km²")
+    print(f"  Basin area: {BASIN_AREA / 1e6:.2f} km²")
     t0 = time.time()
     pareto_df, knee_df, bfs_out = bfs_calibrate_nsga2(
         tmp_site=SITE,
@@ -65,7 +60,6 @@ def main():
     else:
         print("  (no knee solution returned)")
 
-    # Save outputs
     pareto_df.to_csv(f'RV_data/calibration/{SITE}_pareto.csv', index=False)
     print(f"\nPareto front saved to RV_data/calibration/{SITE}_pareto.csv")
 
@@ -90,8 +84,8 @@ def _plot_results(bfs_out, pareto_df, site, knee_df=None):
     ax.set_yscale('log')
 
     ax = axes[1]
-    sc = ax.scatter(pareto_df['RecessionRMSE'], pareto_df['SDRError'],
-                    s=20, alpha=0.8, color='steelblue')
+    ax.scatter(pareto_df['RecessionRMSE'], pareto_df['SDRError'],
+               s=20, alpha=0.8, color='steelblue')
     if knee_df is not None:
         ax.scatter(knee_df['RecessionRMSE'], knee_df['SDRError'],
                    marker='*', s=200, color='red', zorder=5, label='Knee point')
@@ -117,7 +111,6 @@ def plot_only():
     knee_df = pd.read_csv(f'RV_data/calibration/{SITE}_knee.csv')
     print(f"Loaded {len(pareto_df)} Pareto solutions and knee params for {SITE}")
 
-    # Re-run BFS once with knee params to get the hydrograph
     cal_df = pd.read_csv(DATA_PATH, parse_dates=['date'])
     tmp_q = cal_df['discharge_m3d'].values
     dys = cal_df['date'].values
