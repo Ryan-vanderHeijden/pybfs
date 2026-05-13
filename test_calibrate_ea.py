@@ -12,19 +12,21 @@ import matplotlib.pyplot as plt
 from pybfs.calibrate_ea import bfs_calibrate_nsga2, _run_bfs
 from pybfs.utilities import flow_metrics
 
-SITE = '01134500'
+# SITE = '01134500'
+SITE = '04123500'
+
 DATA_PATH = f'RV_data/calibration/{SITE}_cal.csv'
 
 # Basin area for 01134500 (m²) — Upper Ammonoosuc River, NH
-BASIN_AREA = 195e6  # m²
-POP_SIZE = 200
-GENERATIONS = 400
+# BASIN_AREA = 195e6  # m²
+# POP_SIZE = 200
+# GENERATIONS = 400
 
 # Basin area for 04123500 (m²) — Manistee River Near Grayling, MI
 # 123 sq miles × 2.58999 km²/sq mile = 318.57 km²
-# BASIN_AREA = 318.57e6  # m²
-# POP_SIZE = 200
-# GENERATIONS = 400
+BASIN_AREA = 318.57e6  # m²
+POP_SIZE = 200
+GENERATIONS = 400
 
 
 def main():
@@ -55,12 +57,12 @@ def main():
         return
 
     print(f"\n--- Pareto front ({len(pareto_df)} solutions) ---")
-    print(pareto_df[['RecessionRMSE', 'SDRError']].describe().to_string())
+    print(pareto_df[['RecessionRMSE', 'RecessionError']].describe().to_string())
 
     print("\n--- Knee-point solution ---")
     if knee_df is not None:
         cols = ['Lb', 'Wb', 'X1', 'ALPHA', 'BETA', 'Ks', 'Kb', 'Kz',
-                'RecessionRMSE', 'SDRError', 'Error', 'BFF']
+                'RecessionRMSE', 'RecessionError', 'Error', 'BFF']
         print(knee_df[cols].to_string(index=False))
     else:
         print("  (no knee solution returned)")
@@ -90,20 +92,20 @@ def _plot_results(bfs_out, pareto_df, site, knee_df=None):
     ax.set_yscale('log')
 
     ax = axes[1]
-    sc = ax.scatter(pareto_df['RecessionRMSE'], pareto_df['SDRError'],
+    sc = ax.scatter(pareto_df['RecessionRMSE'], pareto_df['RecessionError'],
                     s=20, alpha=0.8, color='steelblue')
     if knee_df is not None:
-        ax.scatter(knee_df['RecessionRMSE'], knee_df['SDRError'],
+        ax.scatter(knee_df['RecessionRMSE'], knee_df['RecessionError'],
                    marker='*', s=200, color='red', zorder=5, label='Knee point')
         ax.legend(loc='upper right')
     ax.set_xlabel('Recession Log-RMSE (F[0])')
-    ax.set_ylabel('SDR Error — |log10(k/k_target)| (F[1])')
+    ax.set_ylabel('Recession Error (F[1])')
     ax.set_title('Pareto front')
 
     x_margin = (pareto_df['RecessionRMSE'].max() - pareto_df['RecessionRMSE'].min()) * 0.1
     ax.set_xlim(pareto_df['RecessionRMSE'].min() - x_margin, pareto_df['RecessionRMSE'].max() + x_margin)
-    re_margin = (pareto_df['SDRError'].max() - pareto_df['SDRError'].min()) * 0.1
-    ax.set_ylim(pareto_df['SDRError'].min() - re_margin, pareto_df['SDRError'].max() + re_margin)
+    re_margin = (pareto_df['RecessionError'].max() - pareto_df['RecessionError'].min()) * 0.1
+    ax.set_ylim(pareto_df['RecessionError'].min() - re_margin, pareto_df['RecessionError'].max() + re_margin)
 
     plt.tight_layout()
     out_path = f'RV_data/calibration/{site}_cal_plot.png'
