@@ -329,6 +329,7 @@ def bfs_calibrate_bucket_nsga2(
 
 _LN2 = np.log(0.5) * -1.0  # ln(2)
 _SEP_FACTOR = 3.0          # base recession must be >= this x slower than surface
+_N_MAX = 3.0               # upper bound on the base-bucket exponent n
 
 
 def surface_ks_from_recession(rs):
@@ -408,14 +409,33 @@ def _run_bucket_fixed_ks(x, streamflow_df, flow, basin_area, sref, ks):
         return None
 
 
-def _base_thalf(qref, n, sref):
-    """Base-bucket flow recession half-life at the reference storage (days).
+def _base_thalf_at(s, k, n):
+    """Base-bucket flow recession half-life at storage s (days).
 
-    For Q = k*S**n the flow e-folding rate at S is k*n*S**(n-1); at S = Sref
-    (with k = Qref/Sref**n) this simplifies to n*Qref/Sref, independent of the
-    absolute k scale. Half-life = ln(2) * Sref / (n * Qref).
+    For Q = k*S**n the flow e-folding rate at S is k*n*S**(n-1), so the
+    half-life is ln(2) * S / (n * k * S**n). For n != 1 this is
+    storage-DEPENDENT, decreasing with S.
     """
-    return _LN2 * sref / (n * qref)
+    return _LN2 * s / (n * k * s ** n)
+
+
+def _base_thalf(bucket_out, k, n):
+    """Base half-life at the median storage the base bucket actually occupies.
+
+    Evaluating at a fixed anchor (e.g. Sref = 50*qmean) is unsafe: where that
+    anchor falls inside the visited storage range varies by site and by n. At
+    12167000 with n free it lands at the 0th percentile, below every storage the
+    model ever reaches, and since t_half decreases with S for n > 1 the reported
+    half-life is inflated ~20x. That let the optimizer buy unlimited slack in the
+    separation constraint by inflating n, without the base bucket actually
+    becoming slower. Anchoring on the realized median removes the loophole and
+    makes the reported half-life mean what it says.
+    """
+    s = bucket_out['StBase'].values
+    s = s[np.isfinite(s) & (s > 0)]
+    if s.size == 0:
+        return np.nan
+    return _base_thalf_at(np.median(s), k, n)
 
 
 class BucketProblemSO(ElementwiseProblem):
@@ -453,7 +473,7 @@ class BucketProblemSO(ElementwiseProblem):
             log_qmean + 2.7,   # log10(Ss_max)
             0.0,               # log10(kr) — max 1 /day
             log_qmean,         # log10(Qref)
-            3.0,               # n
+            _N_MAX,            # n
         ])
         super().__init__(n_var=4, n_obj=1, n_ieq_constr=2, xl=xl, xu=xu, **kwargs)
 
@@ -466,10 +486,13 @@ class BucketProblemSO(ElementwiseProblem):
             return
 
         bucket_out, params = result
-        _, qref, n = _decode_x_fixed_ks(x, self.sref, self.ks)
 
         t_half_surf = _LN2 / params['ks']
-        t_half_base = _base_thalf(qref, n, self.sref)
+        t_half_base = _base_thalf(bucket_out, params['k'], params['n'])
+        if not np.isfinite(t_half_base):
+            out['F'] = [999.0]
+            out['G'] = [999.0, 999.0]
+            return
         g_sep = _SEP_FACTOR * t_half_surf - t_half_base
 
         valid = ~np.isnan(bucket_out['Qob']) & ~np.isnan(bucket_out['Baseflow'])
@@ -580,7 +603,7 @@ def bfs_calibrate_bucket_ga(
     bff = _compute_bff(bucket_out)
     _, qref, n = _decode_x_fixed_ks(best_x, sref, ks)
     t_half_surf = _LN2 / params['ks']
-    t_half_base = _base_thalf(qref, n, sref)
+    t_half_base = _base_thalf(bucket_out, params['k'], params['n'])
 
     best_params = pd.DataFrame({
         'tmp.site': [tmp_site],

@@ -11,6 +11,7 @@ step-wise mass balance, and verifies the base bucket's zero-precip recession
 matches the analytic k*S**n decay. Saves an overlay hydrograph PNG.
 """
 
+import os
 import sys
 import numpy as np
 import pandas as pd
@@ -42,6 +43,8 @@ def bff(df):
 def main():
     site = sys.argv[1] if len(sys.argv) > 1 else '01134500'
     cal = pd.read_csv(f'RV_data/calibration/{site}_cal.csv')
+    op = pd.read_csv(f'RV_data/calibration/{site}_orig_params.csv')
+    area = float(op['tmp.area'][0])
     streamflow = pd.DataFrame({
         'Date': pd.to_datetime(cal['date']),
         'Streamflow': cal['discharge_m3d'].astype(float),
@@ -51,23 +54,29 @@ def main():
     # Flow metrics (prec, rs, fr4rise) shared by both models.
     flow = pybfs.flow_metrics(qin, timestep='day', fr4rise=0.05)
 
-    # --- hand-picked starting params for the bucket model (uncalibrated) ---
-    # Base k from a rough sustained-recession slope; n=1 (exponential) to start.
-    qmean = np.nanmean(qin)
-    k = 0.02                       # 1/day, ~35-day half-life
-    params = {
-        'Ss_max': 5.0 * qmean,     # surface capacity ~5 mean-flow-days
-        'ks': 0.5,                 # surface drains fast
-        'kr': 0.05,                # modest leakage to base
-        'k': k,
-        'n': 1.0,
-    }
+    # --- bucket params: calibrated if available, else hand-picked ---
+    cal_path = f'RV_data/calibration/{site}_bucket_knee.csv'
+    if os.path.exists(cal_path):
+        bp = pd.read_csv(cal_path)
+        params = {c: float(bp[c][0]) for c in ('Ss_max', 'ks', 'kr', 'k', 'n')}
+        source = 'calibrated'
+    else:
+        # Base k from a rough sustained-recession slope; n=1 (exponential) to start.
+        qmean = np.nanmean(qin)
+        params = {
+            'Ss_max': 5.0 * qmean,     # surface capacity ~5 mean-flow-days
+            'ks': 0.5,                 # surface drains fast
+            'kr': 0.05,                # modest leakage to base
+            'k': 0.02,                 # 1/day, ~35-day half-life
+            'n': 1.0,
+        }
+        source = 'uncalibrated starting params'
 
     print(f'=== site {site}: {len(streamflow)} days ===')
-    res = bfs_bucket(streamflow, params, flow, basin_area=195e6)
+    res = bfs_bucket(streamflow, params, flow, basin_area=area)
 
     # --- fit metrics ---
-    print('\nBucket model (uncalibrated starting params):')
+    print(f'\nBucket model ({source}):')
     print(f'  NSE      = {nse(res["Qob"].values, res["Qsim"].values):.3f}')
     print(f'  log-NSE  = {log_nse(res["Qob"].values, res["Qsim"].values):.3f}')
     print(f'  BFF      = {bff(res):.3f}')
@@ -106,10 +115,10 @@ def main():
         seg = res.iloc[best_start:best_start + best_len]
         S0 = seg['StBase'].iloc[0]
         t = np.arange(best_len)
-        if params['n'] == 1.0:
+        k, nn = params['k'], params['n']
+        if nn == 1.0:
             analytic = S0 * np.exp(-k * t)
         else:
-            nn = params['n']
             analytic = (S0 ** (1 - nn) + (nn - 1) * k * t) ** (1 / (1 - nn))
         rel_err = np.nanmax(np.abs(seg['StBase'].values - analytic) / (analytic + 1e-9))
         print(f'\nBase recession check (longest no-precip run = {best_len} d, '
@@ -120,11 +129,8 @@ def main():
         print(f'  mean recharge over window = {seg["Rech"].mean():.1f} m3/day')
 
     # --- overlay hydrograph vs current geometry model ---
-    # Load orig params to run the current bfs() for visual comparison.
-    op = pd.read_csv(f'RV_data/calibration/{site}_orig_params.csv')
     lb, x1, wb, por = op['Lb'][0], op['X1'][0], op['Wb'][0], op['POR'][0]
     alpha, beta, ks_o, kb, kz = op['ALPHA'][0], op['BETA'][0], op['Ks'][0], op['Kb'][0], op['Kz'][0]
-    area = op['tmp.area'][0]
     basin_char = [area, lb, x1, wb, por]
     gw_hyd = [alpha, beta, ks_o, kb, kz]
     flow_o = [op['Qthresh'][0], op['Rs'][0], op['Rb1'][0], op['Rb2'][0],
