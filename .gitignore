@@ -156,3 +156,5 @@ dmypy.json
 /examples/bfs_params_*_python.csv
 # ...except this one, which examples/main_skill.py reads as input.
 !/examples/bfs_params_12167000_python.csv
+dist/
+build/

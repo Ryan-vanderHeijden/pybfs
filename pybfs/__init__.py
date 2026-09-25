@@ -4,7 +4,7 @@
 A Python implementation of Baseflow Separation algorithms for hydrological analysis.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __author__ = "BYU Hydroinformatics"
 __email__ = ""
 
