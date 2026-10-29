@@ -123,6 +123,9 @@ set is simulated anyway and only prints a warning (inside optimizer loops).
 R's 1-indexed `ts>1` corresponds to Python `ts > 0`, so the JIT path matches R and the
 pure-Python path skips a possible impulse on the second time step. The two agreed
 bit-for-bit on 2312200 (no rise on day 2), but they will differ whenever day 1 or 2 is a rise.
+**Verified** (Phase 1 case `bfs_edges_2312200`): with a 50% rise on day 2, the two loops
+differ on 142 of 365 days, by up to 32% in Qsim. The single missed impulse changes the
+surface state for months. Both behaviors are pinned.
 
 ### M4. Day-1 `Infil` is reported as half the available surface storage. [R, L]
 `bfs.py:147–151`. On the first step `I[ts]` is NaN, so `infiltration()` returns NaN and

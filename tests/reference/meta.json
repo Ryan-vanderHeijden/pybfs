@@ -1,0 +1,57 @@
+{
+  "cases": {
+    "base_table": {
+      "arrays": 30,
+      "seconds": 0.05
+    },
+    "bfs_12167000": {
+      "arrays": 72,
+      "seconds": 0.43
+    },
+    "bfs_2312200": {
+      "arrays": 60,
+      "seconds": 0.21
+    },
+    "bfs_edges_2312200": {
+      "arrays": 80,
+      "seconds": 0.54
+    },
+    "calibration_12167000": {
+      "arrays": 30,
+      "seconds": 25.68
+    },
+    "calibration_2312200": {
+      "arrays": 30,
+      "seconds": 55.76
+    },
+    "calibration_pieces": {
+      "arrays": 5,
+      "seconds": 0.06
+    },
+    "flow_metrics": {
+      "arrays": 6,
+      "seconds": 0.14
+    },
+    "forecast_2312200": {
+      "arrays": 10,
+      "seconds": 0.07
+    },
+    "kernels": {
+      "arrays": 14,
+      "seconds": 0.16
+    },
+    "skill_12167000": {
+      "arrays": 25,
+      "seconds": 0.07
+    }
+  },
+  "versions": {
+    "numba": "0.65.1",
+    "numpy": "2.4.5",
+    "pandas": "3.0.3",
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+    "python": "3.11.15",
+    "scipy": "1.17.1",
+    "statsmodels": "0.14.6"
+  }
+}
