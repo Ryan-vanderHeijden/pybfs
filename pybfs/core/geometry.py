@@ -23,7 +23,7 @@ Symbols used as argument names (all lengths in m, flows in m³/day):
 - ``xb``: base-reservoir intersect distance Xb
 - ``impulse``: impulse depth I [m/day]
 
-The arithmetic is written exactly as in pybfs 0.2.0 (``pybfs/legacy``), so
+The arithmetic is written exactly as in pybfs 0.2.0 (tag ``baseline-original``), so
 results are bit-identical, including the known inconsistency between
 `surface_storage_from_thickness` and `surface_thickness_from_storage`
 (suspected issue M10).

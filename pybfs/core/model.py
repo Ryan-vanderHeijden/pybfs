@@ -15,7 +15,7 @@ Order of calculations per step (manual p. 11-12):
 4. Fluxes are the average of start and end estimates (2nd-order Runge-Kutta).
 5. Storages updated with the averaged fluxes; direct runoff from the impulse.
 
-This module reproduces pybfs 0.2.0 (``pybfs.legacy.bfs``, numba path) bit for
+This module reproduces pybfs 0.2.0 (tag ``baseline-original``, numba path) bit for
 bit, including behavior flagged in ``notes/suspected_issues.md`` (M1, M4,
 M10, M12).
 """

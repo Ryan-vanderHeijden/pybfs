@@ -12,8 +12,8 @@ from .calibration import usgs as _usgs
 from .calibration.problem import Record
 from .diagnostics import bf_ci, flow_fractions
 from .frames import legacy_bfs_frame
-from .legacy import calibrate as _legacy
-from .objectives.legacy import usgs_weighted_error, weighted_mean_abs_error
+from .bfs import _require_daily
+from .objectives.usgs import usgs_weighted_error, weighted_mean_abs_error
 from .params import FlowMetrics, ModelParameters
 
 
@@ -27,7 +27,7 @@ def objective(bfs_out_df, prec):
 
     Σ W·(APE² − 1) over the ``bfs()`` result, ignoring days where the model
     over-predicts by more than ``prec`` and days with zero observed flow and
-    baseflow. Lower is better. See `pybfs.objectives.legacy.usgs_weighted_error`.
+    baseflow. Lower is better. See `pybfs.objectives.usgs.usgs_weighted_error`.
 
     Parameters
     ----------
@@ -71,15 +71,13 @@ def cal_initial(logx, streamflow_df, timestep, error_basis, basin_char, gw_hyd, 
 
     See `pybfs.calibration.usgs.initial_problem`. ``qmean`` is unused, as before.
     """
-    if timestep != 'day':
-        return _legacy.cal_initial(logx, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flow, qmean)
+    _require_daily(timestep)
     return _problem(_usgs.initial_problem, streamflow_df, error_basis, basin_char, gw_hyd, flow)(logx)
 
 
 def cal_base(x, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flow):
     """Objective for [Lb, Wb, Kb, Kz]; 100 for out-of-bounds values. See `pybfs.calibration.usgs.base_problem`."""
-    if timestep != 'day':
-        return _legacy.cal_base(x, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flow)
+    _require_daily(timestep)
     return _problem(_usgs.base_problem, streamflow_df, error_basis, basin_char, gw_hyd, flow)(x)
 
 
@@ -88,8 +86,7 @@ def cal_surface(x, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flo
 
     See `pybfs.calibration.usgs.surface_problem`.
     """
-    if timestep != 'day':
-        return _legacy.cal_surface(x, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flow)
+    _require_daily(timestep)
     return _problem(_usgs.surface_problem, streamflow_df, error_basis, basin_char, gw_hyd, flow)(x)
 
 

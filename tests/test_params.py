@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pybfs.data import read_parameter_table, site_parameters
-from pybfs.legacy.utilities import get_values_for_site
+from pybfs.utilities import get_values_for_site
 from pybfs.params import PARAMETERS, FlowMetrics, ModelParameters
 
 from cases import REPO_ROOT
@@ -63,9 +63,12 @@ def test_surface_half_width():
     assert params.surface_half_width == params.base_width / 2
 
 
-def test_get_values_for_site_matches_legacy():
-    from pybfs.utilities import get_values_for_site as compat
+def test_get_values_for_site():
     df = pd.read_csv(TABLE)
-    for site in list(df["site_no"]) + [123, "2312200"]:
-        assert compat(df, site) == get_values_for_site(df, site)
-    assert compat(df, 123) == (None, None, None)
+    row = df[df["site_no"] == 2312200].iloc[0]
+    basin_char, gw_hyd, flow = get_values_for_site(df, 2312200)
+    assert basin_char == list(row[["AREA", "Lb", "X1", "Wb", "POR"]].values)
+    assert gw_hyd == list(row[["ALPHA", "BETA", "Ks", "Kb", "Kz"]].values)
+    assert flow == list(row[["Qthresh", "Rs", "Rb1", "Rb2", "Prec", "Frac4Rise"]].values)
+    assert get_values_for_site(df, 123) == (None, None, None)
+    assert get_values_for_site(df, "2312200") == (None, None, None)  # keys are int

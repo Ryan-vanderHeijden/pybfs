@@ -10,7 +10,6 @@ import warnings
 from .core.model import simulate
 from .data import streamflow_arrays
 from .frames import base_table_from_frame, legacy_bfs_frame
-from .legacy import bfs as _legacy
 from .params import FlowMetrics, ModelParameters
 
 
@@ -37,8 +36,8 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
     flow : list
         Flow metrics [qthresh, rs, rb1, rb2, prec, fr4rise] (see `pybfs.params.FlowMetrics`)
     timestep : str, optional
-        'day' (default) or 'hour'. Hourly runs use the pybfs 0.2.0 implementation
-        unchanged (`pybfs.legacy`); hourly mode is untested.
+        Only 'day' is supported; 'hour' raises NotImplementedError (hourly mode was
+        untested in pybfs 0.2.0; suspected issues M8, M9).
     error_basis : str, optional
         Basis for the error columns ('base' or 'total'), default 'total'
     use_jit : bool, optional
@@ -70,11 +69,16 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
     """
     if not use_jit:
         warnings.warn("use_jit is ignored: bfs() has a single implementation", DeprecationWarning, stacklevel=2)
-    if timestep != 'day':
-        return _legacy.bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep=timestep,
-                           error_basis=error_basis, use_jit=use_jit)
+    _require_daily(timestep)
     dates, q_obs = streamflow_arrays(streamflow)
     metrics = FlowMetrics.from_legacy(flow)
     result = simulate(q_obs, ModelParameters.from_legacy(basin_char, gw_hyd), metrics,
                       base_table=base_table_from_frame(SBT))
     return legacy_bfs_frame(result, dates, metrics, error_basis)
+
+
+def _require_daily(timestep):
+    if timestep == 'hour':
+        raise NotImplementedError("hourly time steps are not supported (see notes/suspected_issues.md, M8/M9)")
+    if timestep != 'day':
+        raise ValueError(f"timestep must be 'day', not {timestep!r}")

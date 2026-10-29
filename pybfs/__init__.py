@@ -11,7 +11,7 @@ Two interfaces are available:
 - the pybfs 0.2.0 functions (`bfs`, `base_table`, `bfs_calibrate`, ...), kept
   with the same signatures and results as wrappers around the new code.
 
-The original implementation stays importable as `pybfs.legacy`.
+The original implementation is the git tag ``baseline-original``.
 """
 
 __version__ = "0.2.0"

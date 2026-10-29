@@ -8,6 +8,7 @@ example M10, the inexact sur_z/sur_store inverse); they are not a statement of
 what it should do.
 """
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +56,13 @@ def params_12167000():
     params = pd.read_csv(REPO_ROOT / "examples/bfs_params_12167000_python.csv")
     params = params.rename(columns={"tmp.site": "site_no", "tmp.area": "AREA"})
     return pybfs.get_values_for_site(params, 12167000)
+
+
+def _no_jit(*args, **kwargs):
+    """bfs(..., use_jit=False): ignored since the M3 fix; kept to pin that it changes nothing."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return pybfs.bfs(*args, use_jit=False, **kwargs)
 
 
 def sbt_for(sf, basin_char, gw_hyd):
@@ -153,7 +161,7 @@ def case_bfs_2312200():
     sbt = sbt_for(sf, bc, gw)
     out = {}
     out.update(_frame("jit_total", pybfs.bfs(sf, sbt, bc, gw, fl)))
-    out.update(_frame("nojit_total", pybfs.bfs(sf, sbt, bc, gw, fl, use_jit=False)))
+    out.update(_frame("nojit_total", _no_jit(sf, sbt, bc, gw, fl)))
     out.update(_frame("jit_base", pybfs.bfs(sf, sbt, bc, gw, fl, error_basis="base")))
     return out
 
@@ -174,7 +182,7 @@ def case_bfs_edges_2312200():
     out = {}
     for label, data in (("rise_day2", rise), ("leading_nan", lead)):
         out.update(_frame(f"{label}.jit", pybfs.bfs(data, sbt, bc, gw, fl)))
-        out.update(_frame(f"{label}.nojit", pybfs.bfs(data, sbt, bc, gw, fl, use_jit=False)))
+        out.update(_frame(f"{label}.nojit", _no_jit(data, sbt, bc, gw, fl)))
     return out
 
 
@@ -187,7 +195,7 @@ def case_bfs_12167000():
     out.update(_frame("jit_total", pybfs.bfs(sf, sbt, bc, gw, fl)))
     base = pybfs.bfs(sf, sbt, bc, gw, fl, error_basis="base")
     out.update(_frame("jit_base", base))
-    out.update(_frame("nojit_base", pybfs.bfs(sf, sbt, bc, gw, fl, error_basis="base", use_jit=False)))
+    out.update(_frame("nojit_base", _no_jit(sf, sbt, bc, gw, fl, error_basis="base")))
     out["objective"] = np.array(cal.objective(base, prec=fl[4]))
     out["calculate_error"] = np.array(cal.calculate_error(base))
     ci_table, ci = pybfs.bf_ci(base)

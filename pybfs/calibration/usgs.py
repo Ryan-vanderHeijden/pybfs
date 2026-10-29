@@ -31,7 +31,7 @@ from ..core.base_table import build_base_table
 from ..core.results import SimulationResult
 from ..diagnostics import baseflow_fraction
 from ..frames import q_for_error
-from ..objectives.legacy import (
+from ..objectives.usgs import (
     recession_rate_mismatch,
     recession_weights,
     relative_error,

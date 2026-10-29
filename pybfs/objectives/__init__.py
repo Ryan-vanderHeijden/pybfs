@@ -5,7 +5,7 @@ weights) and returns a scalar to **minimize**. It knows nothing about the
 model. Which series is scored, with which weights and on which days, is set
 by a `pybfs.calibration.problem.ScoreSpec`.
 
-`legacy` holds the error measures of the USGS procedure, reproduced exactly;
+`usgs` holds the error measures of the USGS procedure (as in pybfs 0.2.0);
 its calibration objective needs more than one series, so the calibration
 problem calls it through `pybfs.calibration.usgs.usgs_objective`.
 
@@ -18,7 +18,7 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from . import legacy  # noqa: F401
+from . import usgs  # noqa: F401
 
 
 class Objective(Protocol):

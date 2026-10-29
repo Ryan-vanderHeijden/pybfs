@@ -70,8 +70,10 @@ plot_baseflow_simulation(streamflow_data, result)
 This fork restructures the internals around a small, pure model core. The
 pybfs 0.2.0 functions shown above still work with the same signatures and
 give the same results (bit for bit; see `tests/`), but they are now thin
-wrappers. The only intentional interface change: plot functions return the
-figure and no longer save or show it unless asked (`save=True, show=True`).
+wrappers. Interface changes: plot functions return the figure and no longer
+save or show it unless asked (`save=True, show=True`); `use_jit` is ignored;
+hourly time steps raise `NotImplementedError`. The original implementation is
+the git tag `baseline-original`.
 
 ```
 pybfs/
@@ -85,12 +87,11 @@ pybfs/
     model.py               simulate(): the forward model
     forecasting.py         forecast() from a ModelState
     results.py             SimulationResult, ModelState, ForecastResult
-  objectives/            Objective functions (pure; currently the USGS procedure's measures)
+  objectives/            Objective functions (pure); usgs.py holds the USGS procedure's measures
   calibration/           CalibrationProblem/ScoreSpec, optimizers, and the USGS 3-step procedure (usgs.calibrate)
   diagnostics.py         Flow fractions, credible intervals, separation/forecast skill
   frames.py              pandas views of results (new and pybfs 0.2.0 column layouts)
   plot.py                Plotting
-  legacy/                The untouched pybfs 0.2.0 implementation, for comparison
   bfs.py, utilities.py, calibrate.py, skill.py   pybfs 0.2.0 interface (wrappers)
 ```
 

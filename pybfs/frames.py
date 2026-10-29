@@ -9,7 +9,7 @@ import pandas as pd
 
 from .core.base_table import N_DISCHARGES, BaseTable, is_monotone
 from .core.results import ForecastResult, SimulationResult
-from .objectives.legacy import recession_weights, relative_error
+from .objectives.usgs import recession_weights, relative_error
 from .params import FlowMetrics
 
 ErrorBasis = Literal["base", "total"]

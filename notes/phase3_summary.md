@@ -68,9 +68,10 @@ untouched original.
 
 ## Waiting for your confirmation
 
-- **Deleting duplicated code** once you accept the match: `pybfs/legacy/`, the
-  legacy routes for hourly/`use_jit=False`, and the plain-Python geometry helpers.
-  The equivalence tests depend on `legacy/`, so they would be retired or frozen at the same time.
+- ~~Deleting duplicated code~~ **Done after you confirmed the match:** `pybfs/legacy/`
+  and the equivalence tests are removed; `use_jit` is ignored (M3) and hourly input
+  raises `NotImplementedError`. The plain-Python geometry helpers (`sur_store` etc.)
+  stay, because they are public names; they run the kernels' Python source.
 
 ## Suspected issues needing a decision (`suspected_issues.md`)
 

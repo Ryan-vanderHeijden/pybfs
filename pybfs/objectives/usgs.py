@@ -1,4 +1,4 @@
-"""The error measures of the USGS BFS procedure (pybfs 0.2.0), on plain arrays.
+"""The error measures of the USGS BFS procedure (as in pybfs 0.2.0), on plain arrays.
 
 Each function reproduces the corresponding legacy computation exactly; the
 docstrings name the legacy function and the behavior issues they inherit.
