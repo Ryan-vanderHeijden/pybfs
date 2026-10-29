@@ -1,6 +1,14 @@
 # Refactor plan (Phase 2 proposal)
 
-Status: **proposal, awaiting approval.** No code has changed. References:
+Status: **approved and implemented** (Phase 3; see `phase3_summary.md`).
+
+As implemented, the layout differs from §1 in a few names, to avoid
+modules that share a name with a function they export: `core/model.py`
+(`simulate`), `core/forecasting.py` (`forecast`), `streamflow_metrics.py`
+(`flow_metrics`); `core/results.py` lives in `core/`, and `frames.py` holds
+the pandas/legacy-layout conversions. The USGS objective is a scorer
+(`calibration.usgs.usgs_objective`) rather than an `Objective`, because it
+needs both the scored series and the baseflow (§4). References:
 `architecture_current.md`, `variable_glossary.md`, `geometry_reconciliation.md`,
 `suspected_issues.md`, and the Phase 1 safety net in `tests/` (12 tests, exact references).
 

@@ -22,6 +22,8 @@ PYTHONPATH=. python -m pytest tests/ -m "not slow"   # skip the two full calibra
 | `reference/generate.py` | Writes `reference/<case>.npz` and `reference/meta.json` (library versions, timings). |
 | `reference/*.npz` | Exact (binary, lossless) reference arrays. |
 | `test_characterization.py` | Re-runs each case and compares with its reference. |
+| `test_core_equivalence.py` | Phase 3: new code vs `pybfs.legacy`, exact equality on random/fuzzed inputs. |
+| `test_params.py`, `test_plot.py`, `test_readme.py` | Parameter containers and tables, plot behavior, the README example (slow). |
 
 ## Cases
 

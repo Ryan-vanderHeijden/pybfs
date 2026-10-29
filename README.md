@@ -65,12 +65,66 @@ result = PyBFS(streamflow_data, SBT, basin_char, gw_hyd, flow)
 plot_baseflow_simulation(streamflow_data, result)
 ```
 
+## Package layout (refactored core)
+
+This fork restructures the internals around a small, pure model core. The
+pybfs 0.2.0 functions shown above still work with the same signatures and
+give the same results (bit for bit; see `tests/`), but they are now thin
+wrappers. The only intentional interface change: plot functions return the
+figure and no longer save or show it unless asked (`save=True, show=True`).
+
+```
+pybfs/
+  params.py              ModelParameters, FlowMetrics, PARAMETERS (names, symbols, units, manual definitions)
+  data.py                Parameter tables and streamflow input (the only file/pandas-input module)
+  streamflow_metrics.py  flow_metrics(): Qthresh, Rs, Rb1, Rb2, Prec from a record
+  core/                  The model, on plain arrays (no pandas, no I/O, no module state)
+    geometry.py            Surface-reservoir kernels, cross-referenced to the USGS manual equations
+    base_table.py          Base-reservoir storage-discharge table and lookups
+    hydrograph.py          Rise/recession classification of the record
+    model.py               simulate(): the forward model
+    forecasting.py         forecast() from a ModelState
+    results.py             SimulationResult, ModelState, ForecastResult
+  objectives/            Objective functions (pure; currently the USGS procedure's measures)
+  calibration/           CalibrationProblem/ScoreSpec, optimizers, and the USGS 3-step procedure (usgs.calibrate)
+  diagnostics.py         Flow fractions, credible intervals, separation/forecast skill
+  frames.py              pandas views of results (new and pybfs 0.2.0 column layouts)
+  plot.py                Plotting
+  legacy/                The untouched pybfs 0.2.0 implementation, for comparison
+  bfs.py, utilities.py, calibrate.py, skill.py   pybfs 0.2.0 interface (wrappers)
+```
+
+Units follow the input: the examples use m, m³/day, and a daily time step.
+`notes/` documents the original code, the variable glossary, the comparison
+with the USGS manual, and suspected issues (none of which are fixed yet).
+
+### Minimal example
+
+```python
+import pandas as pd
+from pybfs import read_parameter_table, site_parameters, simulate
+from pybfs.calibration import usgs
+
+streamflow = pd.read_csv("docs/files/2312200_data.csv", parse_dates=["Date"], date_format="%m/%d/%Y")
+params, flow = site_parameters(read_parameter_table("docs/files/bfs_params_50.csv"), 2312200)
+
+result = simulate(streamflow["Streamflow"].to_numpy(), params, flow)
+print(result.baseflow[:3], result.q_sim[1:3])      # m³/day; arrays, one value per day
+state = result.final_state()                      # start for pybfs.core.forecasting.forecast
+
+calibrated = usgs.calibrate("2312200", params.drainage_area,
+                            streamflow["Streamflow"].to_numpy(), streamflow["Date"])
+print(calibrated.params, calibrated.baseflow_fraction)
+```
+
+To try another objective, wrap a function `objective(q_obs, q_sim, weights) -> float`
+in a `pybfs.calibration.problem.ScoreSpec` (choosing the series, weights, and
+the days to score) and pass it as the `score` of a `CalibrationProblem`.
+
 ## Requirements
 
-- Python 3.7 or higher
-- numpy >= 1.19.0
-- pandas >= 1.1.0
-- matplotlib >= 3.3.0
+- Python 3.10 or higher
+- numpy, pandas, matplotlib, numba, scipy, statsmodels (see `pyproject.toml`)
 
 ## Documentation
 
