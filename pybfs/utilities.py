@@ -7,11 +7,15 @@ unchanged; new code should use `pybfs.core.geometry`,
 """
 
 import numpy as np
+import pandas as pd
 
 from .core import geometry as _geometry
 from .core.base_table import build_base_table, positive_flow_range
-from .frames import legacy_base_table_frame
-from .legacy.utilities import bf_ci, flow_metrics, forecast, get_values_for_site  # noqa: F401  (moved in later steps)
+from .core.forecasting import forecast as _forecast
+from .core.results import ModelState
+from .frames import base_table_from_frame, legacy_base_table_frame, legacy_forecast_frame
+from .legacy.utilities import flow_metrics, get_values_for_site  # noqa: F401  (moved in later steps)
+from .params import ModelParameters
 
 # The plain functions run the kernels' Python source (``py_func``), so they keep
 # Python's float arithmetic exactly as in pybfs 0.2.0; the *_jit names are the
@@ -80,3 +84,39 @@ def base_table(lb, x1, wb, b, kb, q, por):
     """
     table = build_base_table(lb, x1, wb, b, kb, por, *positive_flow_range(np.array(q['Streamflow'])))
     return legacy_base_table_frame(table)
+
+
+def forecast(streamflow, SBT, basin_char, gw_hyd, flow, initial):
+    """Forecast baseflow using PyBFS with provided initial conditions
+
+    Projects baseflow and reservoir states forward with no precipitation
+    (no impulses). See `pybfs.core.forecasting.forecast`.
+
+    Parameters
+    ----------
+    streamflow : pd.DataFrame
+        Columns 'date' (forecast dates) and 'streamflow' (ignored; use NaN)
+    SBT : pd.DataFrame
+        Baseflow table used for the simulation that produced ``initial``
+    basin_char, gw_hyd, flow : list
+        Same as ``bfs()``
+    initial : sequence
+        (X, Zb.L, Zs.L, StBase, StSur, SurfaceFlow, Baseflow, Rech) from the last
+        row of a ``bfs()`` result
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns Date, Baseflow [m³/day], StSur, StBase [m³], Zs, Zb [m], Rech [m³/day].
+        The first row repeats ``initial`` (suspected issue U8).
+    """
+    dates = pd.to_datetime(streamflow["date"])
+    result = _forecast(len(np.array(streamflow['streamflow'])), ModelParameters.from_legacy(basin_char, gw_hyd),
+                       ModelState.from_legacy(initial), base_table_from_frame(SBT))
+    return legacy_forecast_frame(result, dates)
+
+
+def bf_ci(bfs_out):
+    """Calculate credible intervals for baseflow separation; see `pybfs.diagnostics.bf_ci`."""
+    from .diagnostics import bf_ci as _bf_ci
+    return _bf_ci(bfs_out)

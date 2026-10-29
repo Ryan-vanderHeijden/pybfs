@@ -230,3 +230,36 @@ def test_legacy_base_table_frame_index_type():
         new = compat_base_table(9072.0, 100.0, 2202.0, beta, 2850.0, sf, 0.15)
         assert type(new.index) is type(old.index)
         pd.testing.assert_frame_equal(new, old, check_exact=True)
+
+
+# ---------------------------------------------------------------------------
+# Forecast
+# ---------------------------------------------------------------------------
+
+from pybfs.core.forecasting import forecast as core_forecast  # noqa: E402
+from pybfs.frames import base_table_from_frame  # noqa: E402
+
+
+def test_forecast_matches_legacy():
+    """400 forecasts of 90 days from states of simulations with random parameters and lengths."""
+    sf, bc0, _, fl = cases.load_2312200()
+    flow = FlowMetrics.from_legacy(fl)
+    rng = np.random.default_rng(3)
+    dates = pd.date_range("2019-01-01", periods=90)
+    for i in range(400):
+        basin_char, gw_hyd = _random_parameters(rng, bc0[0])
+        params = ModelParameters.from_legacy(basin_char, gw_hyd)
+        sbt = legacy.base_table(basin_char[1], basin_char[2], basin_char[3], gw_hyd[1], gw_hyd[3], sf,
+                                basin_char[4])
+        table = base_table_from_frame(sbt)
+        n_train = rng.integers(30, 365)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            state = simulate(np.array(sf["Streamflow"][:n_train]), params, flow, base_table=table).final_state()
+        old = legacy.forecast(pd.DataFrame({"date": dates, "streamflow": np.nan}), sbt, basin_char, gw_hyd, fl,
+                              state.to_legacy())
+        new = core_forecast(90, params, state, table)
+        for col, values in (("Baseflow", new.baseflow), ("StSur", new.surface_storage),
+                            ("StBase", new.base_storage), ("Zs", new.surface_saturated_thickness),
+                            ("Zb", new.base_saturated_thickness), ("Rech", new.recharge)):
+            np.testing.assert_array_equal(values, old[col].to_numpy(), err_msg=f"{col}, set {i}")
