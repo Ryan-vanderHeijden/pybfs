@@ -5,6 +5,8 @@ Compatibility wrapper around `pybfs.core.model.simulate`. Signature and
 output are unchanged; new code should call ``simulate`` directly.
 """
 
+import warnings
+
 from .core.model import simulate
 from .data import streamflow_arrays
 from .frames import base_table_from_frame, legacy_bfs_frame
@@ -40,9 +42,10 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
     error_basis : str, optional
         Basis for the error columns ('base' or 'total'), default 'total'
     use_jit : bool, optional
-        True (default) runs the model core. False runs the pybfs 0.2.0 pure-Python
-        loop (`pybfs.legacy`), which differs from the default when a rise occurs on
-        the second time step (suspected issue M3).
+        Ignored; kept for compatibility. There is a single implementation. In
+        pybfs 0.2.0, False selected a pure-Python loop that skipped a possible
+        impulse on the second time step (suspected issue M3, resolved toward the
+        default/R behavior).
 
     Returns
     -------
@@ -65,7 +68,9 @@ def bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep='day', error_basis='
     >>> SBT = base_table(lb, x1, wb, beta, kb, streamflow_data, por)
     >>> results = bfs(streamflow_data, SBT, basin_char, gw_hyd, flow)
     """
-    if not use_jit or timestep != 'day':
+    if not use_jit:
+        warnings.warn("use_jit is ignored: bfs() has a single implementation", DeprecationWarning, stacklevel=2)
+    if timestep != 'day':
         return _legacy.bfs(streamflow, SBT, basin_char, gw_hyd, flow, timestep=timestep,
                            error_basis=error_basis, use_jit=use_jit)
     dates, q_obs = streamflow_arrays(streamflow)
