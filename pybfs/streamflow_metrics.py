@@ -181,7 +181,8 @@ def _ten_day_change(q, window):
     if n > window:
         previous = q[:n - window]
         ok = previous > 0
-        change[window:][ok] = ((q[window:] - previous) / previous)[ok]
+        with np.errstate(divide='ignore', invalid='ignore'):  # quotients outside `ok` are discarded
+            change[window:][ok] = ((q[window:] - previous) / previous)[ok]
     change[~is_window_min] = np.nan
     return change
 

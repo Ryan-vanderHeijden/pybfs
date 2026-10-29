@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Literal
 
 import numpy as np
 import pandas as pd
@@ -75,16 +75,77 @@ BETA_CONVERGENCE_TOL = 0.001
 # Objectives of the sub-problems
 # ---------------------------------------------------------------------------
 
-def usgs_objective(result: SimulationResult, flow: FlowMetrics, error_basis: str = "base") -> float:
+@dataclass(frozen=True)
+class UsgsScoring:
+    """How the procedure scores a simulation (manual p. 10-12, table 3).
+
+    The defaults reproduce pybfs 0.2.0. The other settings implement error
+    rules the USGS manual describes but the code did not apply (suspected
+    issue M13); `MANUAL_SCORING` enables all of them.
+
+    Attributes
+    ----------
+    error_basis : {"base", "total"}
+        Series the relative error is computed on: baseflow (the procedure's
+        choice) or total simulated flow.
+    spinup_steps : int
+        Steps at the start of the record excluded from the error, to limit the
+        effect of the initial storages. The manual uses 100 days; default 0.
+    exclude_below_threshold : bool
+        Exclude steps with observed flow below Qthresh, where recession rates
+        increase as streams dry and the model is not reliable (manual p. 10).
+    weight_rate : {"storm", "manual"}
+        Recession rate in the error weights 1 − exp(rate·recession_age):
+        "storm" uses Rs (pybfs 0.2.0); "manual" uses Rb1 for ``error_basis="total"``
+        and Rb2 for ``"base"`` (manual table 3).
+
+    Excluded steps get weight 0, which removes them from both the objective
+    and the reported error.
+    """
+
+    error_basis: Literal["base", "total"] = "base"
+    spinup_steps: int = 0
+    exclude_below_threshold: bool = False
+    weight_rate: Literal["storm", "manual"] = "storm"
+
+    def recession_rate(self, flow: FlowMetrics) -> float:
+        if self.weight_rate == "storm":
+            return flow.storm_recession_rate
+        if self.weight_rate == "manual":
+            return flow.base_recession_rate_at_mean if self.error_basis == "total" else flow.base_recession_rate_low
+        raise ValueError(f"weight_rate must be 'storm' or 'manual', not {self.weight_rate!r}")
+
+    def errors_and_weights(self, result: SimulationResult, flow: FlowMetrics):
+        """Relative error of the scored series and the error weights, with exclusions applied."""
+        rel_error = relative_error(result.q_obs, q_for_error(result, self.error_basis), flow.flow_precision)
+        weights = recession_weights(rel_error, result.recession_age, self.recession_rate(flow))
+        if self.spinup_steps > 0:
+            weights[:self.spinup_steps] = 0
+        if self.exclude_below_threshold:
+            weights[result.q_obs < flow.baseflow_threshold] = 0
+        return rel_error, weights
+
+
+#: pybfs 0.2.0 scoring (the default).
+DEFAULT_SCORING = UsgsScoring()
+#: The error rules described in the USGS manual.
+MANUAL_SCORING = UsgsScoring(spinup_steps=100, exclude_below_threshold=True, weight_rate="manual")
+
+
+def usgs_objective(result: SimulationResult, flow: FlowMetrics, scoring: UsgsScoring = DEFAULT_SCORING) -> float:
     """The procedure's calibration objective for one simulation (legacy ``objective``)."""
-    rel_error = relative_error(result.q_obs, q_for_error(result, error_basis), flow.flow_precision)
-    weights = recession_weights(rel_error, result.recession_age, flow.storm_recession_rate)
+    rel_error, weights = scoring.errors_and_weights(result, flow)
     return usgs_weighted_error(result.q_obs, result.baseflow, rel_error, weights,
                                flow_precision=flow.flow_precision)
 
 
-def initial_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *, error_basis: str = "base",
-                    on_simulate=None) -> CalibrationProblem:
+def model_error(result: SimulationResult, flow: FlowMetrics, scoring: UsgsScoring = DEFAULT_SCORING) -> float:
+    """Weighted mean absolute relative error of a simulation ("Error")."""
+    return weighted_mean_abs_error(*scoring.errors_and_weights(result, flow))
+
+
+def initial_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *,
+                    scoring: UsgsScoring = DEFAULT_SCORING, on_simulate=None) -> CalibrationProblem:
     """``cal_initial``: log10 of Lb, Wb, α, Ks, Kb, Kz."""
     area = params.drainage_area
 
@@ -98,11 +159,11 @@ def initial_problem(record: Record, params: ModelParameters, flow: FlowMetrics, 
         ])
 
     return CalibrationProblem(record, flow, params, INITIAL_NAMES, "log10",
-                              lambda r, f: usgs_objective(r, f, error_basis), is_feasible, 100.0, on_simulate)
+                              lambda r, f: usgs_objective(r, f, scoring), is_feasible, 100.0, on_simulate)
 
 
-def surface_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *, error_basis: str = "base",
-                    on_simulate=None) -> CalibrationProblem:
+def surface_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *,
+                    scoring: UsgsScoring = DEFAULT_SCORING, on_simulate=None) -> CalibrationProblem:
     """``cal_surface``: log10 of Wb, α, Ks, Kz.
 
     Bounds: Wb ≤ AREA/Lb, α ≤ 0.1, Ks and Kz in [1e-8, 1e5] m/day. (pybfs 0.2.0
@@ -116,11 +177,11 @@ def surface_problem(record: Record, params: ModelParameters, flow: FlowMetrics, 
                         logx[3] < -8, logx[3] > 5])
 
     return CalibrationProblem(record, flow, params, SURFACE_NAMES, "log10",
-                              lambda r, f: usgs_objective(r, f, error_basis), is_feasible, 100.0, on_simulate)
+                              lambda r, f: usgs_objective(r, f, scoring), is_feasible, 100.0, on_simulate)
 
 
-def base_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *, error_basis: str = "base",
-                 on_simulate=None) -> CalibrationProblem:
+def base_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *,
+                 scoring: UsgsScoring = DEFAULT_SCORING, on_simulate=None) -> CalibrationProblem:
     """``cal_base``: Lb, Wb, Kb, Kz (linear). Kb ≥ 1e-8 here; R had ``Kb < 10-8`` (issue C4)."""
     area = params.drainage_area
 
@@ -129,7 +190,7 @@ def base_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *, 
                         x[3] < 1e-8, x[3] > 1e5])
 
     return CalibrationProblem(record, flow, params, BASE_NAMES, "linear",
-                              lambda r, f: usgs_objective(r, f, error_basis), is_feasible, 100.0, on_simulate)
+                              lambda r, f: usgs_objective(r, f, scoring), is_feasible, 100.0, on_simulate)
 
 
 @dataclass(frozen=True)
@@ -289,7 +350,7 @@ class _State:
                                self.ks, self.kb, self.kz)
 
 
-def calibrate(site_id, drainage_area, q_obs, dates, *,
+def calibrate(site_id, drainage_area, q_obs, dates, *, scoring: UsgsScoring = DEFAULT_SCORING,
               on_simulate: Callable[[ModelParameters], None] | None = None) -> CalibrationResult | None:
     """Calibrate the BFS model for one site with the USGS procedure.
 
@@ -303,6 +364,9 @@ def calibrate(site_id, drainage_area, q_obs, dates, *,
         Observed daily streamflow [m³/day].
     dates : array-like
         Dates of ``q_obs``.
+    scoring : UsgsScoring, optional
+        Error rules for the objective and the reported error. The default
+        reproduces pybfs 0.2.0; `MANUAL_SCORING` applies the manual's rules.
     on_simulate : callable, optional
         Called with the parameters of every model run, in order.
 
@@ -337,42 +401,43 @@ def calibrate(site_id, drainage_area, q_obs, dates, *,
                kb=kb, kz=10 * q_mean / (lb * wb))
 
     sim = run_simulation(record, s.params(), flow, on_simulate)
-    error = _error(sim, flow)
+    error = model_error(sim, flow, scoring)
     bff = baseflow_fraction(sim.q_obs, sim.baseflow, cap_at_observed=False)
     log.info("Initial parameters: %s; Error=%.6f, BFF=%.6f", s.params(), error, bff)
     history = [_history_row(site_id, s, flow, error, bff)]
 
-    error, bff = _step1(s, record, flow, history, site_id, error, bff, on_simulate)
-    sweep = _step2(s, record, flow, history, site_id, error, bff, q_mean, recession_curve, q_obs, on_simulate)
-    _step3(s, record, flow, history, on_simulate)
+    error, bff = _step1(s, record, flow, history, site_id, error, bff, scoring, on_simulate)
+    sweep = _step2(s, record, flow, history, site_id, error, bff, q_mean, recession_curve, q_obs, scoring,
+                   on_simulate)
+    _step3(s, record, flow, history, scoring, on_simulate)
 
     sim = run_simulation(record, s.params(), flow, on_simulate)
-    error = _error(sim, flow)
+    error = model_error(sim, flow, scoring)
     bff = baseflow_fraction(sim.q_obs, sim.baseflow)
     log.info("Final parameters: %s; Error=%.6f, BFF=%.6f", s.params(), error, bff)
     return CalibrationResult(site_id, s.params(), flow, history, error, bff, sim, dates, sweep)
 
 
-def _step1(s, record, flow, history, site_id, error, bff, on_simulate):
+def _step1(s, record, flow, history, site_id, error, bff, scoring, on_simulate):
     """Calibrate with β = 1: six parameters, then Wb, α, Ks, Kz."""
     log.info("Step 1: initial calibration (beta=%s)", s.beta)
-    result = nelder_mead_parscale(initial_problem(record, s.params(), flow, on_simulate=on_simulate),
+    result = nelder_mead_parscale(initial_problem(record, s.params(), flow, scoring=scoring, on_simulate=on_simulate),
                                   *_twice(np.log10([s.lb, s.wb, s.alpha, s.ks, s.kb, s.kz])))
     if np.all(np.isfinite(result.x)):
         s.lb, s.wb, s.alpha, s.ks, s.kb, s.kz = (10 ** v for v in result.x)  # X1 not updated (as before)
-        result = nelder_mead_parscale(surface_problem(record, s.params(), flow, on_simulate=on_simulate),
+        result = nelder_mead_parscale(surface_problem(record, s.params(), flow, scoring=scoring, on_simulate=on_simulate),
                                       *_twice(np.log10([s.wb, s.alpha, s.ks, s.kz])))
         if np.all(np.isfinite(result.x)):
             s.wb, s.alpha, s.ks, s.kz = (10 ** v for v in result.x)
             sim = run_simulation(record, s.params(), flow, on_simulate)
-            error = _error(sim, flow)
+            error = model_error(sim, flow, scoring)
             bff = baseflow_fraction(sim.q_obs, sim.baseflow)
             log.info("Step 1 result: %s; Error=%.6f, BFF=%.6f", s.params(), error, bff)
         history.append(_history_row(site_id, s, flow, error, bff))
     return error, bff
 
 
-def _step2(s, record, flow, history, site_id, error, bff, q_mean, recession_curve, q_obs, on_simulate):
+def _step2(s, record, flow, history, site_id, error, bff, q_mean, recession_curve, q_obs, scoring, on_simulate):
     """β sweep on the base table, then calibrate the base and surface parameters for the best β."""
     log.info("Step 2: fitting the base-table recession for beta = %s, %s, ..., %s",
              BETA_SWEEP[0], BETA_SWEEP[1], BETA_SWEEP[-1])
@@ -405,24 +470,24 @@ def _step2(s, record, flow, history, site_id, error, bff, q_mean, recession_curv
     s.lb, s.x1, s.wb, s.beta, s.kb = best
     log.info("  best beta=%.3f", s.beta)
 
-    result = nelder_mead_parscale(base_problem(record, s.params(), flow, on_simulate=on_simulate),
+    result = nelder_mead_parscale(base_problem(record, s.params(), flow, scoring=scoring, on_simulate=on_simulate),
                                   *_twice(np.array([s.lb, s.wb, s.kb, s.kz])))
     result.x[result.x < 0] = np.nan
     if np.all(np.isfinite(result.x)):
         s.lb, s.wb, s.kb, s.kz = result.x
-        result = nelder_mead_parscale(surface_problem(record, s.params(), flow, on_simulate=on_simulate),
+        result = nelder_mead_parscale(surface_problem(record, s.params(), flow, scoring=scoring, on_simulate=on_simulate),
                                       *_twice(np.log10([s.wb, s.alpha, s.ks, s.kz])))
         if np.all(np.isfinite(result.x)):
             s.wb, s.alpha, s.ks, s.kz = (10 ** v for v in result.x)
         sim = run_simulation(record, s.params(), flow, on_simulate)
-        error = _error(sim, flow)
+        error = model_error(sim, flow, scoring)
         bff = baseflow_fraction(sim.q_obs, sim.baseflow)
         log.info("Step 2 result: %s; Error=%.6f, BFF=%.6f", s.params(), error, bff)
         history.append(_history_row(site_id, s, flow, error, bff))
     return sweep
 
 
-def _step3(s, record, flow, history, on_simulate):
+def _step3(s, record, flow, history, scoring, on_simulate):
     """Recalibrate the six step-1 parameters from the recorded set with the largest BFF (C11)."""
     if len(history) <= 1:
         return
@@ -433,7 +498,7 @@ def _step3(s, record, flow, history, on_simulate):
     # alpha is kept at its current value, not read from the row (issue C10)
     s.lb, s.x1, s.wb = row["Lb"], row["X1"], row["Wb"]
     s.beta, s.kb, s.ks, s.kz = row["BETA"], row["Kb"], row["Ks"], row["Kz"]
-    result = nelder_mead_parscale(initial_problem(record, s.params(), flow, on_simulate=on_simulate),
+    result = nelder_mead_parscale(initial_problem(record, s.params(), flow, scoring=scoring, on_simulate=on_simulate),
                                   *_twice(np.log10([s.lb, s.wb, s.alpha, s.ks, s.kb, s.kz])))
     if np.all(np.isfinite(result.x)):
         s.lb, s.wb, s.alpha, s.ks, s.kb, s.kz = (10 ** v for v in result.x)  # X1 kept from the row
@@ -442,12 +507,6 @@ def _step3(s, record, flow, history, on_simulate):
 def _twice(x):
     """(x0, scale): the procedure starts each search at x0 with parscale = x0."""
     return x, x
-
-
-def _error(sim: SimulationResult, flow: FlowMetrics) -> float:
-    rel_error = relative_error(sim.q_obs, sim.baseflow, flow.flow_precision)
-    return weighted_mean_abs_error(rel_error, recession_weights(rel_error, sim.recession_age,
-                                                                flow.storm_recession_rate))
 
 
 def _history_row(site_id, s: _State, flow: FlowMetrics, error, bff) -> dict:

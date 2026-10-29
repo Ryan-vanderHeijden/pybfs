@@ -63,7 +63,8 @@ def ini_params(area, lb, x1, wb, por, beta, rb1, tmp_q):
 def _problem(build, streamflow_df, error_basis, basin_char, gw_hyd, flow):
     metrics = FlowMetrics.from_legacy(flow)
     record = Record.prepare(np.array(streamflow_df['Streamflow']), metrics)
-    return build(record, ModelParameters.from_legacy(basin_char, gw_hyd), metrics, error_basis=error_basis)
+    return build(record, ModelParameters.from_legacy(basin_char, gw_hyd), metrics,
+                 scoring=_usgs.UsgsScoring(error_basis=error_basis))
 
 
 def cal_initial(logx, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flow, qmean):
