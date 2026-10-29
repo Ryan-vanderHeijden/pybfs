@@ -5,7 +5,8 @@ code follows the revised R procedure in ``bfs/RecalibrationDescription.txt``):
 
 1. ``step1``: calibrate Lb, Wb, α, Ks, Kb, Kz with β = 1 (``cal_initial``), then
    Wb, α, Ks, Kz (``cal_surface``).
-2. ``step2``: for β = 0.6, 0.7, ... fit the base table's recession rates to the
+2. ``step2``: for β = 0.6, 0.7, ..., 20 (stopping early once the fit stops
+   changing above β = 10) fit the base table's recession rates to the
    empirical recession curve (``cal_basetable``); for the best β, calibrate
    Lb, Wb, Kb, Kz (``cal_base``) and the surface parameters again.
 3. ``step3``: take the parameter set with the largest baseflow fraction and
@@ -14,9 +15,12 @@ code follows the revised R procedure in ``bfs/RecalibrationDescription.txt``):
 Departures from pybfs 0.2.0 (approved fixes, see ``notes/suspected_issues.md``):
 C1/C9, ``cal_surface`` searches Wb, α, Ks, Kz as documented (pybfs 0.2.0 passed
 [Lb, Wb, α, Ks], so it never ran the model) and starts from the current
-parameters. Other inherited behavior is kept and cited where it occurs (C2 no
-reltol, C3 the β sweep, C5-C8 ``ini_params``/X1 details, C10 α not re-read,
-C11 max-BFF selection, C13 rounding to 6 decimals).
+parameters; C3, the β sweep covers 0.6-20 and its early stop compares
+consecutive β values (pybfs 0.2.0 compared a value with itself and always
+stopped at β ≈ 10.1). Other inherited behavior is kept and cited where it
+occurs (C2 scipy's default tolerances instead of R's reltol, C5-C8
+``ini_params``/X1 details, C10 α not re-read, C11 max-BFF selection, C13
+rounding to 6 decimals).
 """
 
 from __future__ import annotations
@@ -59,7 +63,12 @@ HISTORY_COLUMNS = ["tmp.site", "tmp.area", "Lb", "X1", "Wb", "POR", "ALPHA", "BE
 INITIAL_POROSITY = 0.15
 INITIAL_SURFACE_GRADIENT = 0.01
 INITIAL_BETA = 1  # an int, as in the legacy code
-BETA_STEP = 0.1
+#: β values of the step-2 sweep: 0.6, 0.7, ..., 20.0 (each computed as k/10, not by accumulation).
+BETA_SWEEP = tuple(k / 10 for k in range(6, 201))
+#: From β above this value, the sweep stops once the objective changes by less than
+#: `BETA_CONVERGENCE_TOL` (relative) between consecutive fitted β values.
+BETA_CONVERGENCE_START = 10.0
+BETA_CONVERGENCE_TOL = 0.001
 
 
 # ---------------------------------------------------------------------------
@@ -365,38 +374,29 @@ def _step1(s, record, flow, history, site_id, error, bff, on_simulate):
 
 def _step2(s, record, flow, history, site_id, error, bff, q_mean, recession_curve, q_obs, on_simulate):
     """β sweep on the base table, then calibrate the base and surface parameters for the best β."""
-    log.info("Step 2: fitting the base-table recession for beta = 0.6, 0.7, ...")
+    log.info("Step 2: fitting the base-table recession for beta = %s, %s, ..., %s",
+             BETA_SWEEP[0], BETA_SWEEP[1], BETA_SWEEP[-1])
     sweep = []  # rows [Lb, X1, Wb, beta, Kb, objective]
-    n_valid = 0
-    beta = 0.5
-    last_objective = None
-    while True:
-        beta = beta + BETA_STEP
+    previous = None
+    for beta in BETA_SWEEP:
         # X1 such that Qb = Qmean at Xb = Lb/2 (derivation in Rfunction.bfs_calibrate.R)
-        if (2 * beta - 1) != 0:
-            s.x1 = (s.wb * s.kb * beta ** 2 / ((2 * beta - 1) * q_mean) * (s.lb / 2) ** (2 * beta - 1)) ** (1 / (2 * beta))
-        else:
-            s.x1 = np.nan
+        s.x1 = (s.wb * s.kb * beta ** 2 / ((2 * beta - 1) * q_mean) * (s.lb / 2) ** (2 * beta - 1)) ** (1 / (2 * beta))
         if not np.isfinite(s.x1) or s.x1 < 1.0:
             s.x1 = max(1.0 / s.alpha, 1.0)  # Python-only fallback (issue C8)
 
-        if np.isfinite(s.x1) and s.x1 > 0:
-            problem = BaseTableProblem.for_record(beta, s.area, s.por, q_mean, flow.baseflow_threshold,
-                                                  recession_curve, q_obs)
-            result = nelder_mead_parscale(problem, *_twice(np.array([s.lb, s.x1, s.wb, s.kb])))
-            if np.all(np.isfinite(result.x)):
-                n_valid += 1
-                sweep.append([result.x[0], result.x[1], result.x[2], beta, result.x[3], result.fun])
-                last_objective = result.fun
-                if n_valid % 5 == 0:
-                    log.info("  beta=%.1f, objective=%.4f", beta, result.fun)
-
-        # Stops at the first beta > 10: this compares the last value with itself (issue C3)
-        if beta > 10 and sweep and last_objective is not None and n_valid > 0:
-            if abs((last_objective - sweep[n_valid - 1][5]) / last_objective) < 0.001:
-                break
-        if beta == 20:  # never true in floating point (issue C3)
+        problem = BaseTableProblem.for_record(beta, s.area, s.por, q_mean, flow.baseflow_threshold,
+                                              recession_curve, q_obs)
+        result = nelder_mead_parscale(problem, *_twice(np.array([s.lb, s.x1, s.wb, s.kb])))
+        if not np.all(np.isfinite(result.x)):
+            continue
+        sweep.append([result.x[0], result.x[1], result.x[2], beta, result.x[3], result.fun])
+        if len(sweep) % 5 == 0:
+            log.info("  beta=%.1f, objective=%.4f", beta, result.fun)
+        if (beta > BETA_CONVERGENCE_START and previous is not None and result.fun != 0
+                and abs((result.fun - previous) / result.fun) < BETA_CONVERGENCE_TOL):
+            log.info("  converged at beta=%.1f", beta)
             break
+        previous = result.fun
 
     if not sweep:
         return sweep
