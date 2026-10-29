@@ -247,20 +247,22 @@ def case_calibration_pieces():
 
 
 def _run_calibration(site, area, sf):
-    """Run bfs_calibrate and also record every (basin_char, gw_hyd) it simulates."""
+    """Run the calibration and also record every parameter set it simulates.
+
+    The trajectory is one row per model run, ``[basin_char, gw_hyd]``. The
+    outputs are the legacy ``bfs_calibrate`` tuple.
+    """
+    from pybfs.calibrate import legacy_outputs
+    from pybfs.calibration import usgs
+
     calls = []
-    original = cal.bfs
 
-    def recording_bfs(streamflow, SBT, basin_char, gw_hyd, flow, *args, **kwargs):
+    def record(params):
+        basin_char, gw_hyd = params.to_legacy()
         calls.append([float(v) for v in basin_char] + [float(v) for v in gw_hyd])
-        return original(streamflow, SBT, basin_char, gw_hyd, flow, *args, **kwargs)
 
-    cal.bfs = recording_bfs
-    try:
-        bf_params, bff, ci_table, bfs_out = cal.bfs_calibrate(
-            site, area, sf["Streamflow"].to_numpy(), sf["Date"].to_numpy())
-    finally:
-        cal.bfs = original
+    result = usgs.calibrate(site, area, sf["Streamflow"].to_numpy(), sf["Date"].to_numpy(), on_simulate=record)
+    bf_params, bff, ci_table, bfs_out = legacy_outputs(result)
     out = {"bf_params": bf_params.drop(columns=["tmp.site"]).to_numpy(dtype=float)[0],
            "bf_params.__columns__": np.array(list(bf_params.columns[1:])),
            "bff": bff.drop(columns=["tmp.site"]).to_numpy(dtype=float)[0],

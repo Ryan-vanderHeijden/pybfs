@@ -296,3 +296,56 @@ def test_objectives_match_legacy(error_basis):
         mae = objectives.weighted_mean_abs_error(rel_error, weights)
         assert mae == legacy_calibrate.calculate_error(frame) or (np.isnan(mae) and np.isnan(
             legacy_calibrate.calculate_error(frame)))
+
+
+# ---------------------------------------------------------------------------
+# Calibration sub-objectives
+# ---------------------------------------------------------------------------
+
+import pybfs.calibrate as compat_calibrate  # noqa: E402
+
+
+def test_calibration_subobjectives_match_legacy():
+    """cal_initial/cal_base/cal_surface/cal_basetable at random points (feasible and not)."""
+    sf = cases.load_12167000()
+    q = sf["Streamflow"].to_numpy()
+    fm = legacy.flow_metrics(q, timestep="day", fr4rise=0.05)
+    flow, (rbi, rbs) = list(fm[:6]), fm[6]
+    qmean = np.nanmean(q[q >= 0])
+    bc, gw, _ = cases.params_12167000()
+    bc, gw = [float(v) for v in bc], [float(v) for v in gw]
+    rng = np.random.default_rng(9)
+    logx6 = np.log10([bc[1], bc[3], gw[0], gw[2], gw[3], gw[4]])
+    x_base = np.array([bc[1], bc[3], gw[3], gw[4]])
+    x_table = np.array([bc[1], bc[2], bc[3], gw[3]])
+    with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for i in range(40):
+            basis = "total" if i % 4 == 0 else "base"
+            lx = logx6 + rng.normal(0, 0.4, 6)
+            assert (compat_calibrate.cal_initial(lx, sf, "day", basis, bc, gw, flow, qmean)
+                    == legacy_calibrate.cal_initial(lx, sf, "day", basis, bc, gw, flow, qmean))
+            xb = x_base * 10 ** rng.normal(0, 0.4, 4)
+            assert (compat_calibrate.cal_base(xb, sf, "day", basis, bc, gw, flow)
+                    == legacy_calibrate.cal_base(xb, sf, "day", basis, bc, gw, flow))
+            ls = lx[:4] if i % 2 else np.array([lx[0], -1.5, -2.0, 1.0])  # second form passes the C1 check
+            assert (compat_calibrate.cal_surface(ls, sf, "day", basis, bc, gw, flow)
+                    == legacy_calibrate.cal_surface(ls, sf, "day", basis, bc, gw, flow))
+            xt = x_table * 10 ** rng.normal(0, 0.6, 4)
+            beta = rng.choice([0.6, 1.0, 2.5, 7.3, 10.1])
+            params = [6.71e8, 0.15, qmean, flow[0], rbi, rbs]
+            assert compat_calibrate.cal_basetable(xt, beta, params, q) == legacy_calibrate.cal_basetable(
+                xt, beta, params, q)
+
+
+def test_ini_params_matches_legacy():
+    q = cases.load_12167000()["Streamflow"].to_numpy()
+    rng = np.random.default_rng(13)
+    for _ in range(30):
+        area = 10 ** rng.uniform(7, 10)
+        lb = 2 * (area / 2) ** 0.5
+        args = (area, lb, 100.0, area / lb / 10, 0.15, 1, -10 ** rng.uniform(-3, -0.5), q * 10 ** rng.uniform(-2, 2))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pd.testing.assert_frame_equal(compat_calibrate.ini_params(*args), legacy_calibrate.ini_params(*args),
+                                          check_exact=True)
