@@ -4,17 +4,18 @@ Three steps, each a sequence of Nelder-Mead searches (manual p. 15-16; the
 code follows the revised R procedure in ``bfs/RecalibrationDescription.txt``):
 
 1. ``step1``: calibrate Lb, Wb, α, Ks, Kb, Kz with β = 1 (``cal_initial``), then
-   the surface parameters (``cal_surface``).
+   Wb, α, Ks, Kz (``cal_surface``).
 2. ``step2``: for β = 0.6, 0.7, ... fit the base table's recession rates to the
    empirical recession curve (``cal_basetable``); for the best β, calibrate
    Lb, Wb, Kb, Kz (``cal_base``) and the surface parameters again.
 3. ``step3``: take the parameter set with the largest baseflow fraction and
    recalibrate the six parameters of step 1.
 
-This module reproduces the legacy procedure exactly, including behavior
-logged in ``notes/suspected_issues.md``; the relevant issue is cited where
-it occurs (C1 cal_surface never runs the model, C2 no reltol, C3 the β sweep
-stops after β > 10, C5-C8 ``ini_params``/X1 details, C10 α not re-read,
+Departures from pybfs 0.2.0 (approved fixes, see ``notes/suspected_issues.md``):
+C1/C9, ``cal_surface`` searches Wb, α, Ks, Kz as documented (pybfs 0.2.0 passed
+[Lb, Wb, α, Ks], so it never ran the model) and starts from the current
+parameters. Other inherited behavior is kept and cited where it occurs (C2 no
+reltol, C3 the β sweep, C5-C8 ``ini_params``/X1 details, C10 α not re-read,
 C11 max-BFF selection, C13 rounding to 6 decimals).
 """
 
@@ -48,7 +49,7 @@ log = logging.getLogger(__name__)
 #: Search vectors of the sub-problems (legacy ``cal_*`` argument order).
 INITIAL_NAMES = ("basin_length", "base_width", "surface_gradient", "surface_conductivity",
                  "base_conductivity", "vertical_conductivity")
-SURFACE_NAMES = ("basin_length", "base_width", "surface_gradient", "surface_conductivity")
+SURFACE_NAMES = ("base_width", "surface_gradient", "surface_conductivity", "vertical_conductivity")
 BASE_NAMES = ("basin_length", "base_width", "base_conductivity", "vertical_conductivity")
 
 #: Columns of the parameter-set history (``bf_params``).
@@ -93,16 +94,16 @@ def initial_problem(record: Record, params: ModelParameters, flow: FlowMetrics, 
 
 def surface_problem(record: Record, params: ModelParameters, flow: FlowMetrics, *, error_basis: str = "base",
                     on_simulate=None) -> CalibrationProblem:
-    """``cal_surface``: log10 of Lb, Wb, α, Ks.
+    """``cal_surface``: log10 of Wb, α, Ks, Kz.
 
-    The feasibility test is written for a vector [Wb, α, Ks, Kz] but receives
-    [Lb, Wb, α, Ks], so ``log10(Wb) > -1`` rejects every realistic point and the
-    model never runs (suspected issue C1, inherited from the R code).
+    Bounds: Wb ≤ AREA/Lb, α ≤ 0.1, Ks and Kz in [1e-8, 1e5] m/day. (pybfs 0.2.0
+    and the R code passed [Lb, Wb, α, Ks] to this test, which rejected every
+    realistic point, so the model never ran; suspected issue C1, fixed.)
     """
     area_per_length = params.drainage_area / params.basin_length
 
     def is_feasible(logx):
-        return not any([10 ** logx[1] > area_per_length, logx[1] > -1, logx[2] < -8, logx[2] > 5,
+        return not any([10 ** logx[0] > area_per_length, logx[1] > -1, logx[2] < -8, logx[2] > 5,
                         logx[3] < -8, logx[3] > 5])
 
     return CalibrationProblem(record, flow, params, SURFACE_NAMES, "log10",
@@ -344,16 +345,16 @@ def calibrate(site_id, drainage_area, q_obs, dates, *,
 
 
 def _step1(s, record, flow, history, site_id, error, bff, on_simulate):
-    """Calibrate with β = 1: six parameters, then the surface parameters (a no-op, C1)."""
+    """Calibrate with β = 1: six parameters, then Wb, α, Ks, Kz."""
     log.info("Step 1: initial calibration (beta=%s)", s.beta)
     result = nelder_mead_parscale(initial_problem(record, s.params(), flow, on_simulate=on_simulate),
                                   *_twice(np.log10([s.lb, s.wb, s.alpha, s.ks, s.kb, s.kz])))
     if np.all(np.isfinite(result.x)):
         s.lb, s.wb, s.alpha, s.ks, s.kb, s.kz = (10 ** v for v in result.x)  # X1 not updated (as before)
         result = nelder_mead_parscale(surface_problem(record, s.params(), flow, on_simulate=on_simulate),
-                                      *_twice(np.log10([s.lb, s.wb, s.alpha, s.ks])))
+                                      *_twice(np.log10([s.wb, s.alpha, s.ks, s.kz])))
         if np.all(np.isfinite(result.x)):
-            s.lb, s.wb, s.alpha, s.ks = (10 ** v for v in result.x)
+            s.wb, s.alpha, s.ks, s.kz = (10 ** v for v in result.x)
             sim = run_simulation(record, s.params(), flow, on_simulate)
             error = _error(sim, flow)
             bff = baseflow_fraction(sim.q_obs, sim.baseflow)
@@ -408,17 +409,12 @@ def _step2(s, record, flow, history, site_id, error, bff, q_mean, recession_curv
                                   *_twice(np.array([s.lb, s.wb, s.kb, s.kz])))
     result.x[result.x < 0] = np.nan
     if np.all(np.isfinite(result.x)):
-        # The surface problem is built from the parameters *before* this cal_base result (issue C9)
-        stale = s.params()
         s.lb, s.wb, s.kb, s.kz = result.x
-        result = nelder_mead_parscale(surface_problem(record, stale, flow, on_simulate=on_simulate),
-                                      *_twice(np.log10([s.lb, s.wb, s.alpha, s.ks])))
+        result = nelder_mead_parscale(surface_problem(record, s.params(), flow, on_simulate=on_simulate),
+                                      *_twice(np.log10([s.wb, s.alpha, s.ks, s.kz])))
         if np.all(np.isfinite(result.x)):
-            s.lb, s.wb, s.alpha, s.ks = (10 ** v for v in result.x)
-            run_params = s.params()
-        else:
-            run_params = stale
-        sim = run_simulation(record, run_params, flow, on_simulate)
+            s.wb, s.alpha, s.ks, s.kz = (10 ** v for v in result.x)
+        sim = run_simulation(record, s.params(), flow, on_simulate)
         error = _error(sim, flow)
         bff = baseflow_fraction(sim.q_obs, sim.baseflow)
         log.info("Step 2 result: %s; Error=%.6f, BFF=%.6f", s.params(), error, bff)

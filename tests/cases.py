@@ -246,7 +246,8 @@ def case_calibration_pieces():
         pybfs.cal_base(np.array([bc[1], bc[3], gw[3], gw[4]]) * f, sf, "day", "base", bc, gw, flow)
         for f in (1.0, 1.1, 0.9)])
     out["cal_surface"] = np.array([
-        pybfs.cal_surface(np.log10([bc[1], bc[3], gw[0], gw[2]]), sf, "day", "base", bc, gw, flow)])
+        pybfs.cal_surface(np.log10([bc[3], gw[0], gw[2], gw[4]]) + d, sf, "day", "base", bc, gw, flow)
+        for d in (0.0, 0.05, -0.05)])
     out["cal_basetable"] = np.array([
         pybfs.cal_basetable(np.array([bc[1], bc[2], bc[3], gw[3]]), b,
                             [area, por, qmean, flow[0], rbi, rbs], q)

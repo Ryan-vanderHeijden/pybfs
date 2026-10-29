@@ -82,9 +82,10 @@ def cal_base(x, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flow):
 
 
 def cal_surface(x, streamflow_df, timestep, error_basis, basin_char, gw_hyd, flow):
-    """Objective for log10 [Lb, Wb, ALPHA, Ks]; returns 100 for realistic inputs (issue C1).
+    """Objective for log10 [Wb, ALPHA, Ks, Kz]; 100 for out-of-bounds values.
 
-    See `pybfs.calibration.usgs.surface_problem`.
+    See `pybfs.calibration.usgs.surface_problem`. (pybfs 0.2.0 was called with
+    [Lb, Wb, ALPHA, Ks] and always returned 100; suspected issue C1, fixed.)
     """
     _require_daily(timestep)
     return _problem(_usgs.surface_problem, streamflow_df, error_basis, basin_char, gw_hyd, flow)(x)
