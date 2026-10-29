@@ -69,7 +69,7 @@ def main():
 
     # Plot results
     print("\nPlotting baseflow simulation...")
-    pybfs.plot_baseflow_simulation(streamflow_data, result)
+    pybfs.plot_baseflow_simulation(streamflow_data, result, save=True, show=True)
 
     # === FORECASTING EXAMPLE ===
     print("\n=== Running Forecast Example ===")
@@ -112,6 +112,8 @@ def main():
         training_bfs=tmp2,
         forecast_data=f,
         title=f"Training ({start_date} to {end_date}) + Forecast ({forecast_start} to {forecast_end})",
+        save=True,
+        show=True,
     )
 
     # # Plot forecast

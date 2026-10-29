@@ -2,6 +2,17 @@
 """Plotting functions for PyBFS
 
 Functions for visualizing baseflow separation results and forecasts.
+
+Every function returns its ``matplotlib.figure.Figure``. Two keyword
+arguments are shared:
+
+- ``save``: False (default) does not write a file; True writes the function's
+  default file name (as in pybfs 0.2.0) to the current directory; a path writes
+  there. ``dpi`` sets the resolution.
+- ``show``: call ``plt.show()`` (default False).
+
+pybfs 0.2.0 always saved to the current directory and called ``plt.show()``;
+pass ``save=True, show=True`` for that behavior.
 """
 
 import pandas as pd
@@ -14,8 +25,9 @@ def plot_baseflow_simulation(
     baseflow,
     title="Baseflow Simulation",
     figsize=(10, 6),
-    save=True,
+    save=False,
     dpi=300,
+    show=False,
 ):
     """Plots observed streamflow vs simulated baseflow from PyBFS
 
@@ -78,9 +90,7 @@ def plot_baseflow_simulation(
 
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
-    if save:
-        fig.savefig("baseflow_simulation.png", dpi=dpi, bbox_inches="tight")
-    plt.show()
+    return _finish(fig, save, "baseflow_simulation.png", dpi, show)
 
 def plot_forecast(
     training_streamflow,
@@ -89,8 +99,9 @@ def plot_forecast(
     title="Baseflow Training + Forecast",
     streamflow_col="Streamflow",
     figsize=(10, 6),
-    save=True,
+    save=False,
     dpi=300,
+    show=False,
 ):
     """Plot training-period streamflow/baseflow and forecast-period baseflow.
 
@@ -195,12 +206,10 @@ def plot_forecast(
 
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
-    if save:
-        fig.savefig("figure_3.png", dpi=dpi, bbox_inches="tight")
-    plt.show()
+    return _finish(fig, save, "figure_3.png", dpi, show)
 
 
-def plot_forecast_baseflow(forecast_data, figsize=(9, 5), save=True, dpi=300):
+def plot_forecast_baseflow(forecast_data, figsize=(9, 5), save=False, dpi=300, show=False):
     """Plot baseflow forecast time series
 
     Creates a time series plot of forecasted baseflow. Shows how baseflow
@@ -243,13 +252,11 @@ def plot_forecast_baseflow(forecast_data, figsize=(9, 5), save=True, dpi=300):
     axs.tick_params(axis='x')
     axs.tick_params(axis='y')
 
-    if save:
-        fig.savefig("baseflow_forecast.png", dpi=dpi, bbox_inches="tight")
-    plt.show()
+    return _finish(fig, save, "baseflow_forecast.png", dpi, show)
 
 
 def plot_forecast_baseflow_streamflow(
-    forecast_data, streamflow, figsize=(9, 5), save=True, dpi=300
+    forecast_data, streamflow, figsize=(9, 5), save=False, dpi=300, show=False
 ):
     """Plot forecast baseflow with observed streamflow for comparison
 
@@ -302,7 +309,12 @@ def plot_forecast_baseflow_streamflow(
     axs.tick_params(axis='y')
     #end
 
-    if save:
-        fig.savefig("baseflow_forecast_streamflow.png", dpi=dpi, bbox_inches="tight")
-    plt.show()
+    return _finish(fig, save, "baseflow_forecast_streamflow.png", dpi, show)
 
+
+def _finish(fig, save, default_name, dpi, show):
+    if save:
+        fig.savefig(default_name if save is True else save, dpi=dpi, bbox_inches="tight")
+    if show:
+        plt.show()
+    return fig
