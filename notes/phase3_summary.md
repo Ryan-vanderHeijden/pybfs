@@ -88,3 +88,20 @@ All are still reproduced exactly. In order of relevance to Phase 4:
 | M3 | JIT vs pure-Python impulse condition (pure-Python path still on legacy) | decide, then drop one path |
 | D1 | 12167000 zero days (ice) treated as real zeros in `main_calib.py` | data decision |
 | U1, U8, C4, C8, M12 | flow-metric defaults, forecast one-day offset, Kb bound, X1 fallback, initial baseflow | small each |
+
+## After Phase 3 (your decisions, 2026-10-29)
+
+| Commit | Change | Effect on references |
+|---|---|---|
+| `bc61ba2` | `use_jit` ignored, single implementation (M3) | `bfs_edges_2312200`: only the `use_jit=False` rise-on-day-2 arrays, now equal to the default |
+| `f06a2b0` | `pybfs/legacy/` and the equivalence tests removed; hourly input raises `NotImplementedError` | none |
+| `2ea272c` | `cal_surface` runs on [Wb, α, Ks, Kz] and from current parameters (C1, C9) | `calibration_pieces`; both calibrations (12167000: BFF 0.404 → 0.407; 2312200: step 3 picks β = 1.0 over 0.9, Lb +41%, Error 0.652 → 0.714) |
+| `dc6400a` | β sweep 0.6–20 with a real convergence test (C3) | `calibration_2312200` (≤ 1.3e-15 in step-2 runs; final parameters unchanged) |
+| `7e65322` | `UsgsScoring` options for the manual's error rules (M13) | none (default = pybfs 0.2.0) |
+
+M10 is open, pending the original author. C2 is closed as "won't fix": the current
+Nelder-Mead tolerances are scipy's defaults.
+
+With `MANUAL_SCORING` the calibrations change substantially (12167000: BFF 0.407 → 0.397;
+2312200: BFF 0.509 → 0.601, Lb 23,700 → 6,550 m). `Error` values are not comparable
+between scorings, because the weights differ.

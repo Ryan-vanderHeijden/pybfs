@@ -118,6 +118,10 @@ calibrated = usgs.calibrate("2312200", params.drainage_area,
 print(calibrated.params, calibrated.baseflow_fraction)
 ```
 
+The USGS procedure's error rules are options: `usgs.calibrate(..., scoring=usgs.MANUAL_SCORING)`
+applies the manual's 100-day spin-up exclusion, Qthresh gating, and Rb1/Rb2
+weights (`usgs.UsgsScoring` sets them individually; the default reproduces pybfs 0.2.0).
+
 To try another objective, wrap a function `objective(q_obs, q_sim, weights) -> float`
 in a `pybfs.calibration.problem.ScoreSpec` (choosing the series, weights, and
 the days to score) and pass it as the `score` of a `CalibrationProblem`.

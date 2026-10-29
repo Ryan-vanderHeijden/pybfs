@@ -12,11 +12,25 @@ Origin key:
 Impact key: **H** changes calibrated parameters or default model output; **M**
 changes output in plausible edge cases; **L** cosmetic, dead code, or rare.
 
+## Status (updated 2026-10-29, after Phase 3)
+
+| ID | Decision | Commit |
+|---|---|---|
+| M10 | **Open:** awaiting the original author on which surface-storage formulation is correct; reproduced as-is | — |
+| C1 | **Fixed:** `cal_surface` searches [Wb, α, Ks, Kz] as documented | `2ea272c` |
+| C9 | **Fixed** with C1: the step-2 surface search starts from the post-`cal_base` parameters | `2ea272c` |
+| C2 | **Won't fix:** scipy's default Nelder-Mead tolerances (`fatol = xatol = 1e-4`) are accepted; R's reltol is not emulated | — |
+| C3 | **Fixed:** β sweep 0.6–20 in exact 0.1 steps, early stop compares consecutive β | `dc6400a` |
+| M13 | **Options:** `UsgsScoring` (spin-up exclusion, Qthresh gating, Rb1/Rb2 weights); default = pybfs 0.2.0, `MANUAL_SCORING` = manual. The Rb1/Rb2 *definitions* in `flow_metrics` are unchanged | `7e65322` |
+| M3 | **Resolved:** single implementation; `use_jit` ignored | `bc61ba2` |
+| M8, M9 | **Hourly mode removed** from the model (`NotImplementedError`); `flow_metrics` keeps hourly support | `f06a2b0` |
+| others | Open, reproduced as in pybfs 0.2.0 | — |
+
 ---
 
 ## Calibration (`pybfs/calibrate.py`)
 
-### C1. `cal_surface` never runs the model, so surface calibration is a no-op. [R, H]
+### C1. `cal_surface` never runs the model, so surface calibration is a no-op. [R, H] — FIXED
 `calibrate.py:557–570`; R: `Rfunctions.bfs_calibration_sub.R:147–162` vs. the call sites at `Rfunction.bfs_calibrate.R:61,133`.
 The callers pass `log10([Lb, Wb, ALPHA, Ks])`, but `cal_surface` was written for
 `[Wb, ALPHA, Ks, Kz]`. Its rejection test `x[1] > -1` therefore tests
@@ -27,7 +41,7 @@ decodes the body correctly, but the body is unreachable.
 Consequence: ALPHA and Ks are only tuned inside the 6-parameter `cal_initial` (steps 1a and 3b).
 The documented "Step 2 … cal_surface" (RecalibrationDescription.txt) never happens.
 
-### C2. R's `reltol=0.01` convergence criterion is not implemented. [PY, H]
+### C2. R's `reltol=0.01` convergence criterion is not implemented. [PY, H] — WON'T FIX (scipy defaults accepted)
 `calibrate.py:18–65,112–116`. `_wrap_objective_with_reltol` sets
 `_reltol_tracker['stop']`, but nothing reads it. It also compares successive
 *function evaluations*, not iterations. scipy stops on `fatol=1e-4` (absolute) and
@@ -36,7 +50,7 @@ relative tolerance. So Python calibrations run longer and can land on different 
 `_create_reltol_callback` and `RelTolConvergence` (lines 20–29) are dead code.
 `cal_initial`/`cal_surface` are wrapped twice (once at the call site, once inside `_create_scaled_minimize`).
 
-### C3. The β sweep ends at the first β > 10, not at β = 20. [R, M]
+### C3. The β sweep ends at the first β > 10, not at β = 20. [R, M] — FIXED
 `calibrate.py:903–911`; R `Rfunction.bfs_calibrate.R:112–113`.
 (a) The "convergence" test compares `last_obj` with `tmp_out[n-1][5]`, which is the
 value that was just appended, so it is always 0 and the loop ends at β ≈ 10.1.
@@ -66,7 +80,7 @@ Because the bounds loop only runs once from `bfs_calibrate`, with β = 1, the ef
 ### C8. Step 2 adds an X1 fallback that R does not have. [PY, L]
 `calibrate.py:879–881`: `if X1 < 1: X1 = max(1/ALPHA, 1)`. R has no lower clamp.
 
-### C9. Step 2 can record parameters that disagree with the run they were scored on. [R, L]
+### C9. Step 2 can record parameters that disagree with the run they were scored on. [R, L] — FIXED (with C1)
 `calibrate.py:953–1022`. After `cal_base`, `basin_char`/`gw_hyd` are only rebuilt
 inside `if np.all(np.isfinite(result.x))` of the following `cal_surface`. If that
 were ever non-finite, `bfs` would run with pre-`cal_base` geometry while `bf_params`
@@ -118,7 +132,7 @@ set is simulated anyway and only prints a warning (inside optimizer loops).
 ### M2. The parameter check lists `ks` twice and omits `kz`. [PY, L]
 `bfs.py:370`. R checks `kz` (`Rfunction.bfs.R:100`) and also checks for `Inf` (`:102`), which Python does not.
 
-### M3. The JIT and pure-Python loops differ in the impulse condition. [PY, M]
+### M3. The JIT and pure-Python loops differ in the impulse condition. [PY, M] — RESOLVED (single loop)
 `bfs.py:118` (JIT) uses `ts > 0`; `bfs.py:475` (`use_jit=False`) uses `ts > 1`.
 R's 1-indexed `ts>1` corresponds to Python `ts > 0`, so the JIT path matches R and the
 pure-Python path skips a possible impulse on the second time step. The two agreed
@@ -156,7 +170,7 @@ This is consistent only with an implicit Δt = 1 day; hourly runs would be off b
 `timestep='hour'` changes `dq` (and `flow_metrics` windows), but rate constants and
 `ifact` assume daily steps. Calibration hard-codes `'day'`.
 
-### M10. `sur_z` is not the inverse of `sur_store`. [R, H]
+### M10. `sur_z` is not the inverse of `sur_store`. [R, H] — OPEN (asking the original author)
 `utilities.py:47` (and the `_jit` copy at `:225`); R `Rfunctions.bfs_utilities.R:79`.
 `a1 = 1/(2*a)` makes `sur_z` invert `Ss = Lb·POR·(2ws·Zs − Zs²/(2α))`, while `sur_store`
 computes `Lb·POR·(2ws·Zs − Zs²/α)`. **Verified** (12167000 calibrated geometry):
@@ -175,7 +189,7 @@ saturated-expansion runoff term (`bfs.py:135,205`) is not in the manual. The cod
 ### M12. Initial baseflow is `min(Q(1), Qmean)`; the manual says `Qthresh`. [R vs manual, M]
 `bfs.py:42,401`; R `Rfunction.bfs.R:117`. Manual p. 12: "assuming baseflow is equal to the threshold streamflow: Qb(1) = Qthresh".
 
-### M13. Manual error rules that neither R nor Python implement. [R vs manual, H for calibration]
+### M13. Manual error rules that neither R nor Python implement. [R vs manual, H for calibration] — OPTIONS (`UsgsScoring`)
 - Manual p. 12: "The first 100 days … are not included in the calculation of overall model error." Neither `bfs` nor `objective` excludes them.
 - Manual p. 10: "Model errors are not used for time steps when Q(t) < Qthresh." Not applied.
 - Manual table 3: Rb1 weights errors when `error_basis='total'` and Rb2 when `'base'`. The code always weights by **Rs** (`bfs.py:564`).
