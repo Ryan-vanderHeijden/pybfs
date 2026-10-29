@@ -39,7 +39,7 @@ from ..objectives.legacy import (
     weighted_mean_abs_error,
 )
 from ..params import FlowMetrics, ModelParameters
-from ..utilities import flow_metrics
+from ..streamflow_metrics import flow_metrics
 from .optimizers import nelder_mead_parscale
 from .problem import CalibrationProblem, Record, run_simulation
 

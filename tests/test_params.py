@@ -61,3 +61,11 @@ def params_symbols():
 def test_surface_half_width():
     params, _ = site_parameters(read_parameter_table(TABLE), 2312200)
     assert params.surface_half_width == params.base_width / 2
+
+
+def test_get_values_for_site_matches_legacy():
+    from pybfs.utilities import get_values_for_site as compat
+    df = pd.read_csv(TABLE)
+    for site in list(df["site_no"]) + [123, "2312200"]:
+        assert compat(df, site) == get_values_for_site(df, site)
+    assert compat(df, 123) == (None, None, None)

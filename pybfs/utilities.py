@@ -14,7 +14,8 @@ from .core.base_table import build_base_table, positive_flow_range
 from .core.forecasting import forecast as _forecast
 from .core.results import ModelState
 from .frames import base_table_from_frame, legacy_base_table_frame, legacy_forecast_frame
-from .legacy.utilities import flow_metrics, get_values_for_site  # noqa: F401  (moved in later steps)
+from .data import get_values_for_site  # noqa: F401
+from .streamflow_metrics import flow_metrics  # noqa: F401
 from .params import ModelParameters
 
 # The plain functions run the kernels' Python source (``py_func``), so they keep

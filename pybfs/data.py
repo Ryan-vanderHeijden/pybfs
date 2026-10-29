@@ -74,3 +74,32 @@ def site_parameters(table: dict, site_no) -> tuple[ModelParameters, FlowMetrics]
     example = next(iter(table), None)
     hint = f" (keys look like {example!r}, type {type(example).__name__})" if example is not None else ""
     raise KeyError(f"site {site_no!r} not in parameter table{hint}")
+
+
+def get_values_for_site(df, site_no):
+    """Extracts site-specific parameters from a DataFrame (pybfs 0.2.0 interface)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Columns site_no, AREA, Lb, X1, Wb, POR, ALPHA, BETA, Ks, Kb, Kz, Qthresh,
+        Rs, Rb1, Rb2, Prec, Frac4Rise
+    site_no : int
+        Site identification number
+
+    Returns
+    -------
+    tuple of (basin_char, gw_hyd, flow)
+        Lists [AREA, Lb, X1, Wb, POR], [ALPHA, BETA, Ks, Kb, Kz] and [Qthresh, Rs,
+        Rb1, Rb2, Prec, Frac4Rise]; each is ``None`` if ``site_no`` is not in the
+        table (use `read_parameter_table` and `site_parameters` to get an error
+        instead).
+    """
+    symbols = {name: PARAMETERS[name].symbol for name in BASIN_CHAR_FIELDS + GW_HYD_FIELDS}
+    basin_char_columns = [symbols[f] for f in BASIN_CHAR_FIELDS]
+    gw_hyd_columns = [symbols[f] for f in GW_HYD_FIELDS]
+    rows = {}
+    for _, row in df.iterrows():  # the last row wins for duplicated sites, as before
+        rows[row['site_no']] = (list(row[basin_char_columns].values), list(row[gw_hyd_columns].values),
+                                list(row[list(FLOW_COLUMNS)].values))
+    return rows.get(site_no, (None, None, None))

@@ -349,3 +349,50 @@ def test_ini_params_matches_legacy():
             warnings.simplefilter("ignore")
             pd.testing.assert_frame_equal(compat_calibrate.ini_params(*args), legacy_calibrate.ini_params(*args),
                                           check_exact=True)
+
+
+# ---------------------------------------------------------------------------
+# Flow metrics
+# ---------------------------------------------------------------------------
+
+from pybfs.streamflow_metrics import flow_metrics as new_flow_metrics  # noqa: E402
+
+
+def _fuzzed_records(rng, n_records):
+    bases = [cases.load_12167000()["Streamflow"].to_numpy(), cases.load_2312200()[0]["Streamflow"].to_numpy()]
+    yield np.full(40, 5.0)                                    # constant
+    yield np.array([3.0, 2.0, 1.0, 2.0, 5.0, 4.0, 3.0, 2.5])  # very short
+    yield np.zeros(30)                                        # no positive flow
+    for i in range(n_records):
+        q = bases[i % 2].copy() * 10 ** rng.uniform(-3, 3)
+        start = rng.integers(0, len(q) // 2)
+        q = q[start:start + rng.integers(60, len(q) - start + 1)]
+        for _ in range(rng.integers(0, 6)):                   # gaps of 1-5 steps
+            at = rng.integers(0, len(q))
+            q[at:at + rng.integers(1, 6)] = np.nan
+        if i % 3 == 0:
+            q[rng.random(len(q)) < 0.02] = 0.0                # zeros
+        if i % 5 == 0:
+            q[rng.random(len(q)) < 0.01] = -1.0               # negatives
+        if i % 4 == 0:
+            q = np.round(q, -int(np.floor(np.log10(np.nanmedian(q)))) + 1)  # coarse values -> exact ties
+        yield q
+
+
+@pytest.mark.parametrize("timestep", ["day", "hour"])
+def test_flow_metrics_matches_legacy(timestep):
+    rng = np.random.default_rng(17)
+    for i, q in enumerate(_fuzzed_records(rng, 150 if timestep == "day" else 15)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                old = legacy.flow_metrics(q, timestep=timestep, fr4rise=0.05)
+            except Exception as error:  # e.g. records shorter than the window
+                with pytest.raises(type(error)):
+                    new_flow_metrics(q, timestep=timestep, fr4rise=0.05)
+                continue
+            new = new_flow_metrics(q, timestep=timestep, fr4rise=0.05)
+        assert len(new) == len(old) == 7
+        for k in range(6):
+            assert (new[k] == old[k]) or (np.isnan(new[k]) and np.isnan(old[k])), f"record {i}, element {k}"
+        np.testing.assert_array_equal(new[6], old[6], err_msg=f"record {i}, rb10")
