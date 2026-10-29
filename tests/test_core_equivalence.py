@@ -263,3 +263,36 @@ def test_forecast_matches_legacy():
                             ("StBase", new.base_storage), ("Zs", new.surface_saturated_thickness),
                             ("Zb", new.base_saturated_thickness), ("Rech", new.recharge)):
             np.testing.assert_array_equal(values, old[col].to_numpy(), err_msg=f"{col}, set {i}")
+
+
+# ---------------------------------------------------------------------------
+# Objectives
+# ---------------------------------------------------------------------------
+
+from pybfs.frames import q_for_error  # noqa: E402
+from pybfs.legacy import calibrate as legacy_calibrate  # noqa: E402
+from pybfs.objectives import legacy as objectives  # noqa: E402
+
+
+@pytest.mark.parametrize("error_basis", ["base", "total"])
+def test_objectives_match_legacy(error_basis):
+    sf, _, _, _ = cases.load_2312200()
+    sf_b = cases.load_12167000()
+    _, _, fl = cases.params_12167000()
+    flow = FlowMetrics.from_legacy(fl)
+    rng = np.random.default_rng(5)
+    for i in range(100):
+        record = sf if i % 2 else sf_b
+        basin_char, gw_hyd = _random_parameters(rng, 6.71e8)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = simulate(np.array(record["Streamflow"]), ModelParameters.from_legacy(basin_char, gw_hyd), flow)
+        frame = legacy_bfs_frame(result, pd.to_datetime(record["Date"]), flow, error_basis)
+        rel_error = objectives.relative_error(result.q_obs, q_for_error(result, error_basis), flow.flow_precision)
+        weights = objectives.recession_weights(rel_error, result.recession_age, flow.storm_recession_rate)
+        new = objectives.usgs_weighted_error(result.q_obs, result.baseflow, rel_error, weights,
+                                             flow_precision=flow.flow_precision)
+        assert new == legacy_calibrate.objective(frame, fl[4])
+        mae = objectives.weighted_mean_abs_error(rel_error, weights)
+        assert mae == legacy_calibrate.calculate_error(frame) or (np.isnan(mae) and np.isnan(
+            legacy_calibrate.calculate_error(frame)))

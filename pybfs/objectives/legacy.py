@@ -34,18 +34,29 @@ def recession_weights(rel_error: Array, recession_age: NDArray[np.int64], storm_
     return weight
 
 
-def usgs_weighted_error(q_obs: Array, q_sim: Array, *, rel_error: Array, weights: Array,
+def usgs_weighted_error(q_obs: Array, baseflow: Array, rel_error: Array, weights: Array, *,
                         flow_precision: float) -> float:
     """Calibration objective of the USGS procedure, Σ W·(APE² − 1); lower is better.
 
-    Days where the model over-predicts by more than ``Prec`` get weight 0, and
-    so do days where both ``q_obs`` and ``q_sim`` are 0. In the legacy procedure
-    ``q_sim`` is the baseflow and ``rel_error`` is computed from it. Legacy:
-    ``calibrate.objective`` (see suspected issue C12 on its asymmetry).
+    Parameters
+    ----------
+    q_obs, baseflow : ndarray
+        Observed flow and simulated baseflow [m³/day].
+    rel_error, weights : ndarray
+        `relative_error` and `recession_weights` of the scored series (baseflow
+        in the calibration procedure, which uses ``error_basis='base'``).
+    flow_precision : float
+        Prec [m³/day].
+
+    Days where the scored series exceeds the observation by more than ``Prec``
+    get weight 0, and so do days where both ``q_obs`` and ``baseflow`` are 0.
+    Legacy: ``calibrate.objective`` (see suspected issue C12 on its asymmetry).
+    This is not a generic `pybfs.objectives.Objective`: it needs both the scored
+    series' error and the baseflow, as the legacy procedure does.
     """
     w = weights.copy()
     w[rel_error > flow_precision / (q_obs + flow_precision)] = 0
-    w[(q_obs == 0) & (q_sim == 0)] = 0
+    w[(q_obs == 0) & (baseflow == 0)] = 0
     return np.nansum(w * (-1 + rel_error**2))
 
 
