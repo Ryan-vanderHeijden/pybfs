@@ -153,6 +153,34 @@ This is consistent only with an implicit Δt = 1 day; hourly runs would be off b
 `timestep='hour'` changes `dq` (and `flow_metrics` windows), but rate constants and
 `ifact` assume daily steps. Calibration hard-codes `'day'`.
 
+### M10. `sur_z` is not the inverse of `sur_store`. [R, H]
+`utilities.py:47` (and the `_jit` copy at `:225`); R `Rfunctions.bfs_utilities.R:79`.
+`a1 = 1/(2*a)` makes `sur_z` invert `Ss = Lb·POR·(2ws·Zs − Zs²/(2α))`, while `sur_store`
+computes `Lb·POR·(2ws·Zs − Zs²/α)`. **Verified** (12167000 calibrated geometry):
+`sur_z(sur_store(Zs))/Zs` = 0.997, 0.91, 0.84, 0.586 at 1%, 30%, 50%, 100% of α·ws.
+In the calibrated run Zs reaches 0.34·α·ws (≈ 10% error). Every step converts storage → Zs with
+`sur_z` and Zs → discharge with `sur_q`, so surface discharge and saturated area are biased low.
+The negative-discriminant branch is unreachable. The docstring claims an inverse that doesn't hold.
+The manual doesn't settle which form is right (eq. 4 matches neither; see `geometry_reconciliation.md` §2.1–2.2).
+
+### M11. Kernel formulas depart from the manual's printed equations. [DESIGN / manual ambiguity, H if changed]
+Details in `notes/geometry_reconciliation.md`. In short: `infiltration` uses Lb and Ks where
+eq. 14 has Xb and Kz (the manual's own tables 2 and 5 agree with the code); `sur_store`
+differs from eq. 4 (which conflicts with the manual's geometry); the ½ factor on the
+saturated-expansion runoff term (`bfs.py:135,205`) is not in the manual. The code is a faithful port of R throughout.
+
+### M12. Initial baseflow is `min(Q(1), Qmean)`; the manual says `Qthresh`. [R vs manual, M]
+`bfs.py:42,401`; R `Rfunction.bfs.R:117`. Manual p. 12: "assuming baseflow is equal to the threshold streamflow: Qb(1) = Qthresh".
+
+### M13. Manual error rules that neither R nor Python implement. [R vs manual, H for calibration]
+- Manual p. 12: "The first 100 days … are not included in the calculation of overall model error." Neither `bfs` nor `objective` excludes them.
+- Manual p. 10: "Model errors are not used for time steps when Q(t) < Qthresh." Not applied.
+- Manual table 3: Rb1 weights errors when `error_basis='total'` and Rb2 when `'base'`. The code always weights by **Rs** (`bfs.py:564`).
+- Manual table 3 / eq. 18: Rb1 = **median** and Rb2 = **95th percentile** of 10-day recession rates. `flow_metrics` evaluates a 10th-percentile quantile regression at log Qmean and at the 10th pct of log Q instead (also R). This partly resolves U5: the manual defines Rb2 as the slow (95th-pct) 10-day rate, but the code computes something else.
+Caveat: the manual documents the older `bf_sep`. `bfs/RecalibrationDescription.txt` says the
+weights and errors were revised afterward, so some of these may be intentional. Calibration
+objectives in Phase 4 should decide on these explicitly.
+
 ---
 
 ## Utilities (`pybfs/utilities.py`)

@@ -83,7 +83,7 @@ Arrays have length `p` (number of steps). Column index meanings are positional t
 | `qcomp[:,2]` → `DirectRunoff` | Saturation-excess plus infiltration-excess runoff from the impulse (NaN on step 0) | m³/day | | `direct_runoff` |
 | `ETA` → `Eta` | Residual q_obs − Σ components. R comment: "state disturbances (positive = inputs)" | m³/day | `bfs.py:362` | `residual` |
 | `I` → `Impulse.L` | Inferred precipitation impulse (depth per step over the surface zone); NaN on step 0 | m/day | `bfs.py:363` | `impulse` |
-| `Z[:,0]` → `Zs.L` | Saturated thickness of the surface zone at the channel (datum = channel) | m | `bfs.py:364` | `surface_level` |
+| `Z[:,0]` → `Zs.L` | **Zs**: saturated thickness of the surface reservoir at the section where the water surface intersects the land surface (manual eq. 9 key, fig. 1) | m | `bfs.py:364` | `surface_saturated_thickness` |
 | `Z[:,1]` → `Zb.L` | Base water-table height at the intersect (datum = outlet) | m | | `base_level` |
 | `ST[:,0]` → `StSur` | Surface storage | m³ | `bfs.py:365` | `surface_storage` |
 | `ST[:,1]` → `StBase` | Base storage | m³ | | `base_storage` |
@@ -130,8 +130,8 @@ Argument names are short and inconsistent: `a` = α, `z` vs `zs` for the same th
 
 | Function | Formula | Returns | Proposed |
 |---|---|---|---|
-| `sur_store(lb, a, ws, por, zs)` | Lb·por·(2·ws·zs − zs²/α) | surface storage m³ | `surface_storage_from_level` |
-| `sur_z(lb, a, ws, por, ss)` | inverse of `sur_store` (quadratic root), capped at ws·α | m | `surface_level_from_storage` |
+| `sur_store(lb, a, ws, por, zs)` | Lb·por·(2·ws·zs − zs²/α) | surface storage m³ (manual eq. 4 departs; see reconciliation §2.1) | `surface_storage_from_thickness` |
+| `sur_z(lb, a, ws, por, ss)` | intended inverse of `sur_store`, **but not an exact inverse** (issue M10) | m | `surface_thickness_from_storage` |
 | `sur_q(lb, a, ks, z)` | 2·Lb·zs·α·Ks (Darcy, two banks) | m³/day | `surface_discharge` |
 | `dir_q(lb, a, z, i)` | 2·Lb·(zs/α)·i (rain on the saturated strip) | m³/day | `saturated_area_runoff` |
 | `infiltration(lb, ws, ks, a, zs, i)` | 2·Lb·(ws − zs/α)·min(i, Ks) | m³/day | `infiltration_rate` |
@@ -224,7 +224,9 @@ Argument names are short and inconsistent: `a` = α, `z` vs `zs` for the same th
 
 1. **Rb2**: physical meaning and percentile (comment vs. code; issue U5).
 2. **Kz**: conductivity or max recharge depth per step. Code treats it as the latter (issue M8).
-3. **Ws = Wb/2**: why the surface half-width is tied to half the *base* width is not explained in the code; the report would confirm it.
+3. ~~Ws = Wb/2~~ **Resolved by the manual:** Wb is the full basin width spanning both hillslopes (fig. 1), and table 2 passes `Wb/2` to the surface kernels, so `ws` is the width of one hillslope. New ambiguity: manual table 4 calls Lb the "width of base reservoir" while eq. 9 calls it the width of the surface reservoir (see `geometry_reconciliation.md` §3).
+7. **Kernel symbol definitions** now follow the manual; see `notes/geometry_reconciliation.md` §1. Proposed names for the surface state use the manual's term "saturated thickness" rather than "level" (for example `surface_saturated_thickness`), and `Xs = Zs/α` (saturated half-width of the land surface, manual eq. 3) gets its own name: `saturated_half_width`.
+8. **Rb1/Rb2** (item 1): the manual (table 3, eq. 18) defines them as the median and 95th percentile of 10-day recession rates. The code computes neither (suspected issue M13).
 4. **`wet4` in `modified_strict_baseflow`**: identical to `wet3_core` (issue S3).
 5. **Eta sign convention**: the R comment says "positive values represent inputs", but in the code it is simply observed − simulated.
 6. **X1** as "the distance where z = 1 m" follows from z = (x/X1)^β but makes X1 depend on the length unit; confirm that is the intended interpretation.
