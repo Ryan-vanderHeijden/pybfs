@@ -135,7 +135,7 @@ def test_lookups_match_legacy_semantics(strict):
 
 def test_lookups_fall_back_for_unsorted_columns():
     values = np.array([0.0, 2.0, 1.0, np.nan, 3.0])
-    assert not bt._is_monotone(values)
+    assert not bt.is_monotone(values)
     for t in (0.5, 1.5, 2.5, 5.0, np.nan):
         for strict in (False, True):
             assert bt.count_leading(values, t, strict, False) == _legacy_leading(values, t, strict)
@@ -150,3 +150,71 @@ def test_max_storage_matches_legacy_loop():
             if s > largest:
                 largest = s
         assert bt.max_storage(values) == largest
+
+
+# ---------------------------------------------------------------------------
+# Forward model: differential test against legacy bfs() (numba path)
+# ---------------------------------------------------------------------------
+
+import contextlib  # noqa: E402
+import zlib  # noqa: E402
+import io  # noqa: E402
+
+from pybfs.core.model import simulate  # noqa: E402
+from pybfs.frames import legacy_bfs_frame  # noqa: E402
+from pybfs.legacy.bfs import bfs as legacy_bfs  # noqa: E402
+from pybfs.params import FlowMetrics, ModelParameters  # noqa: E402
+
+N_PARAMETER_SETS = 100  # per record
+
+
+def _records():
+    sf_a, bc_a, gw_a, fl_a = cases.load_2312200()
+    sf_b = cases.load_12167000()
+    sf_c = cases.load_12167000(mask_zeros=True)
+    _, _, fl_b = cases.params_12167000()
+    rise = sf_a.copy()
+    rise.loc[1, "Streamflow"] = rise.loc[0, "Streamflow"] * 1.5
+    lead = sf_a.copy()
+    lead.loc[:2, "Streamflow"] = np.nan
+    return {"2312200": (sf_a, bc_a[0], fl_a), "12167000": (sf_b, 6.71e8, fl_b),
+            "12167000_masked": (sf_c, 6.71e8, fl_b), "rise_day2": (rise, bc_a[0], fl_a),
+            "leading_nan": (lead, bc_a[0], fl_a)}
+
+
+def _random_parameters(rng, area):
+    lb = 10 ** rng.uniform(2.5, 5)
+    return [area, lb, 10 ** rng.uniform(0, 3), 10 ** rng.uniform(1, np.log10(area / lb) + 0.3),
+            rng.uniform(0.05, 0.4)], [10 ** rng.uniform(-4, -1), rng.uniform(0.6, 10.1),
+                                      10 ** rng.uniform(-2, 4), 10 ** rng.uniform(-2, 5), 10 ** rng.uniform(-4, 2)]
+
+
+def _assert_frames_identical(new, old, context):
+    assert list(new.columns) == list(old.columns), context
+    np.testing.assert_array_equal(new.index.to_numpy(), old.index.to_numpy(), err_msg=context)
+    for col in old.columns:
+        a, b = new[col].to_numpy(), old[col].to_numpy()
+        if col == "Date":
+            np.testing.assert_array_equal(a, b, err_msg=context)
+        else:
+            np.testing.assert_array_equal(a.astype(float), b.astype(float), err_msg=f"{col}: {context}")
+
+
+@pytest.mark.parametrize("record", list(_records()))
+def test_simulate_matches_legacy_bfs(record):
+    sf, area, fl = _records()[record]
+    flow = FlowMetrics.from_legacy(fl)
+    rng = np.random.default_rng(zlib.crc32(record.encode()))
+    q = np.array(sf["Streamflow"])
+    dates = pd.to_datetime(sf["Date"])
+    for i in range(N_PARAMETER_SETS):
+        basin_char, gw_hyd = _random_parameters(rng, area)
+        error_basis = "base" if i % 2 else "total"
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            sbt = legacy.base_table(basin_char[1], basin_char[2], basin_char[3], gw_hyd[1], gw_hyd[3], sf,
+                                    basin_char[4])
+            old = legacy_bfs(sf, sbt, basin_char, gw_hyd, fl, error_basis=error_basis)
+            result = simulate(q, ModelParameters.from_legacy(basin_char, gw_hyd), flow)
+        new = legacy_bfs_frame(result, dates, flow, error_basis)
+        _assert_frames_identical(new, old, f"{record} set {i}: {basin_char} {gw_hyd}")

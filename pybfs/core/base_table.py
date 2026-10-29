@@ -112,7 +112,7 @@ def build_base_table(basin_length: float, base_profile_scale: float, base_width:
     keep = xb < lb
     columns = (xb[keep], z[keep], s[keep], q[keep])
     return BaseTable(*columns, row_index=np.flatnonzero(keep),
-                     monotone=tuple(_is_monotone(c) for c in (columns[0], columns[2], columns[3])))
+                     monotone=tuple(is_monotone(c) for c in (columns[0], columns[2], columns[3])))
 
 
 def round_significant(x: Array, digits: int) -> Array:
@@ -127,7 +127,8 @@ def round_significant(x: Array, digits: int) -> Array:
     return result
 
 
-def _is_monotone(values: Array) -> bool:
+def is_monotone(values: Array) -> bool:
+    """True if ``values`` is non-decreasing and has no NaN (binary-search lookups are then exact)."""
     return bool(not np.isnan(values).any() and np.all(np.diff(values) >= 0))
 
 
