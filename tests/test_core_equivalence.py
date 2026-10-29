@@ -218,3 +218,15 @@ def test_simulate_matches_legacy_bfs(record):
             result = simulate(q, ModelParameters.from_legacy(basin_char, gw_hyd), flow)
         new = legacy_bfs_frame(result, dates, flow, error_basis)
         _assert_frames_identical(new, old, f"{record} set {i}: {basin_char} {gw_hyd}")
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")  # beta = 0.5 overflows by design
+def test_legacy_base_table_frame_index_type():
+    """Same index *type* as legacy, not just values (RangeIndex keeps label lookups fast)."""
+    from pybfs.utilities import base_table as compat_base_table
+    sf = cases.load_12167000()
+    for beta in (1.0, 0.5, 2.5):
+        old = legacy.base_table(9072.0, 100.0, 2202.0, beta, 2850.0, sf, 0.15)
+        new = compat_base_table(9072.0, 100.0, 2202.0, beta, 2850.0, sf, 0.15)
+        assert type(new.index) is type(old.index)
+        pd.testing.assert_frame_equal(new, old, check_exact=True)

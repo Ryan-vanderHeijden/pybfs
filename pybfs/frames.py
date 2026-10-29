@@ -7,7 +7,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from .core.base_table import BaseTable, is_monotone
+from .core.base_table import N_DISCHARGES, BaseTable, is_monotone
 from .core.results import ForecastResult, SimulationResult
 from .objectives.legacy import recession_weights, relative_error
 from .params import FlowMetrics
@@ -76,9 +76,16 @@ def legacy_forecast_frame(result: ForecastResult, dates: pd.Series) -> pd.DataFr
 
 
 def legacy_base_table_frame(table: BaseTable) -> pd.DataFrame:
-    """The ``Xb, Z, S, Q`` DataFrame returned by pybfs 0.2.0 ``base_table()``."""
+    """The ``Xb, Z, S, Q`` DataFrame returned by pybfs 0.2.0 ``base_table()``.
+
+    The index is built the way the legacy code built it (boolean selection on a
+    ``RangeIndex``), so it keeps the same type: pandas returns a ``RangeIndex``
+    when the kept rows are contiguous, which makes label lookups fast.
+    """
+    keep = np.zeros(N_DISCHARGES + 1, dtype=bool)
+    keep[table.row_index] = True
     return pd.DataFrame({"Xb": table.intersect_distance, "Z": table.saturated_thickness, "S": table.storage,
-                         "Q": table.discharge}, index=table.row_index)
+                         "Q": table.discharge}, index=pd.RangeIndex(N_DISCHARGES + 1)[keep])
 
 
 def base_table_from_frame(frame: pd.DataFrame) -> BaseTable:
