@@ -14,7 +14,7 @@ Two interfaces are available:
 The original implementation is the git tag ``baseline-original``.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0.dev0"
 __author__ = "BYU Hydroinformatics"
 __email__ = ""
 
